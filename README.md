@@ -36,13 +36,14 @@ The Café service has no PostgreSQL container and never creates databases, roles
 ## Getting started — 2 separate repositories
 
 1. Create an empty GitHub repository named **`apexvoid-cafe`**. Nothing needs to be copied into the Enterprise source tree.
-2. In the Enterprise environment create the shared network once:
+2. In the Enterprise environment create the two shared networks once:
 
    ```bash
    docker network create apexvoid-apps
+   docker network create apexvoid-data
    ```
 
-3. Give Enterprise's existing **backend and postgres** services access to that network. Compose the Enterprise stack with `deploy/enterprise-network.override.yml` supplied in this project. Set a unique, long `INTEGRATIONS_ASSERTION_SECRET`, a trusted `DATABASE_PROVISIONING_URL`, and a stable 32+ character `DATABASE_PROVISIONING_KEY`; ensure `INTEGRATIONS_ALLOWED_SERVICE_HOSTS` includes `cafe` (and preserve other already-allowed hosts if configured).
+3. Give Enterprise's **backend** access to both networks and **postgres** access to `apexvoid-data`. Compose the Enterprise stack with `deploy/enterprise-network.override.yml` supplied in this project. Set a unique, long `INTEGRATIONS_ASSERTION_SECRET`, a trusted `DATABASE_PROVISIONING_URL` using the Docker hostname `postgres` (not `localhost`), and a stable 32+ character `DATABASE_PROVISIONING_KEY`; ensure `INTEGRATIONS_ALLOWED_SERVICE_HOSTS` includes `cafe` (and preserve other already-allowed hosts if configured). For a fresh local Enterprise PostgreSQL volume, set `DATABASE_PROVISIONER_PASSWORD`; Enterprise's init script creates the restricted `apexvoid_provisioner` administrator required for approved database provisioning.
 4. In this project, copy `.env.example` to `.env` and start the independent Café service:
 
    ```bash

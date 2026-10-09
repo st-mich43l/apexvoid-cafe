@@ -14,6 +14,7 @@ services:
     networks:
       apexvoid-apps:
         aliases: [cafe]
+      apexvoid-data: {}
     # Intentionally NO host ports: all user access is through Enterprise.
 
 volumes:
@@ -23,3 +24,6 @@ networks:
   apexvoid-apps:
     external: true
     name: apexvoid-apps
+  apexvoid-data:
+    external: true
+    name: apexvoid-data
