@@ -1,0 +1,16 @@
+# Add to ApexVoid Enterprise docker compose configuration, not its Go/React code.
+# Example from Enterprise directory:
+# docker compose -f docker-compose.yml -f /absolute/path/to/enterprise-network.override.yml up -d
+services:
+  backend:
+    environment:
+      INTEGRATIONS_ALLOWED_SERVICE_HOSTS: cafe
+      INTEGRATIONS_ASSERTION_SECRET: ${INTEGRATIONS_ASSERTION_SECRET:?Set a unique 32+ character assertion secret}
+    networks:
+      - default
+      - apexvoid-apps
+networks:
+  default: {}
+  apexvoid-apps:
+    external: true
+    name: apexvoid-apps

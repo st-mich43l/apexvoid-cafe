@@ -1,0 +1,43 @@
+services:
+  cafe-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cafe
+      POSTGRES_USER: cafe
+      POSTGRES_PASSWORD: ${CAFE_DB_PASSWORD:?Set CAFE_DB_PASSWORD in .env}
+    volumes:
+      - cafe-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cafe -d cafe"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    networks:
+      - cafe-internal
+
+  cafe:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://cafe:${CAFE_DB_PASSWORD:?Set CAFE_DB_PASSWORD in .env}@cafe-db:5432/cafe?sslmode=disable
+      APEXVOID_URL: http://backend:6868
+      APEXVOID_SERVICE_CREDENTIAL: ${APEXVOID_SERVICE_CREDENTIAL:-}
+    depends_on:
+      cafe-db:
+        condition: service_healthy
+    networks:
+      cafe-internal: {}
+      apexvoid-apps:
+        aliases: [cafe]
+    # Intentionally NO host ports: all user access is through Enterprise.
+
+volumes:
+  cafe-db-data:
+
+networks:
+  cafe-internal:
+    internal: true
+  apexvoid-apps:
+    external: true
+    name: apexvoid-apps
