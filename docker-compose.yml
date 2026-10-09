@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      APEXVOID_URL: http://backend:6868
+      APEXVOID_URL: ${APEXVOID_URL:-http://backend:6868}
       DATABASE_HOST: ${DATABASE_HOST:-postgres}
       DATABASE_PORT: ${DATABASE_PORT:-5432}
       DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
@@ -23,7 +23,7 @@ volumes:
 networks:
   apexvoid-apps:
     external: true
-    name: apexvoid-apps
+    name: ${APEXVOID_APPS_NETWORK:-apexvoid-apps}
   apexvoid-data:
     external: true
-    name: apexvoid-data
+    name: ${APEXVOID_DATA_NETWORK:-apexvoid-data}
