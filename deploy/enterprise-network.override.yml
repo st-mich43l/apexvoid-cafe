@@ -5,18 +5,23 @@ services:
   postgres:
     networks:
       - default
-      - apexvoid-apps
+      - apexvoid-data
   backend:
     environment:
-      INTEGRATIONS_ALLOWED_SERVICE_HOSTS: cafe
+      # Include cafe plus any other existing approved service hosts.
+      INTEGRATIONS_ALLOWED_SERVICE_HOSTS: ${INTEGRATIONS_ALLOWED_SERVICE_HOSTS:-cafe}
       INTEGRATIONS_ASSERTION_SECRET: ${INTEGRATIONS_ASSERTION_SECRET:?Set a unique 32+ character assertion secret}
       DATABASE_PROVISIONING_URL: ${DATABASE_PROVISIONING_URL:?Set the trusted PostgreSQL provisioning URL}
       DATABASE_PROVISIONING_KEY: ${DATABASE_PROVISIONING_KEY:?Set a stable 32+ character provisioning key}
     networks:
       - default
       - apexvoid-apps
+      - apexvoid-data
 networks:
   default: {}
   apexvoid-apps:
     external: true
     name: apexvoid-apps
+  apexvoid-data:
+    external: true
+    name: apexvoid-data
