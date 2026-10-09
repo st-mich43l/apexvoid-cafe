@@ -4,9 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,44 +14,6 @@ import (
 type Store struct{ DB *sql.DB }
 
 func New(db *sql.DB) *Store { return &Store{DB: db} }
-
-// Migrate runs the initial schema transactionally, one statement at a time.
-// Its advisory lock prevents simultaneous first-start installations.
-func (s *Store) Migrate(ctx context.Context, sqlText string) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(72840021)`); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS cafe_schema_migrations(version integer PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
-		return err
-	}
-	var exists bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cafe_schema_migrations WHERE version=1)`).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return tx.Commit()
-	}
-	// 001 contains no PL/pgSQL functions or string-embedded semicolons. Future
-	// complex migrations should use a proper migration runner.
-	noComments := regexp.MustCompile(`(?m)--[^\n]*`).ReplaceAllString(sqlText, "")
-	for _, statement := range strings.Split(noComments, ";") {
-		if strings.TrimSpace(statement) == "" {
-			continue
-		}
-		if _, err = tx.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("apply schema: %w", err)
-		}
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO cafe_schema_migrations(version) VALUES (1)`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
 func MapError(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.ErrNotFound

@@ -2,6 +2,6 @@
 web/node_modules/
 web/dist/
 web/tsconfig.tsbuildinfo
-cafe
+/cafe
 *.log
 .DS_Store

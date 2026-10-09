@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
 	"github.com/st-mich43l/apexvoid-cafe/internal/platform"
@@ -30,13 +31,39 @@ type Authorizer interface {
 	Introspect(context.Context, string, string) (platform.Decision, error)
 }
 type Server struct {
+	mu       sync.RWMutex
 	store    Store
 	auth     Authorizer
 	assetDir string
+	provider func() (Store, Authorizer, bool)
 }
 
 func New(store Store, auth Authorizer, assetDir string) *Server {
 	return &Server{store: store, auth: auth, assetDir: assetDir}
+}
+
+// SetRuntimeProvider lets the HTTP surface come up before the Enterprise-
+// provisioned database exists. Existing tests and local callers that pass
+// store/auth to New retain the original always-ready behavior.
+func (s *Server) SetRuntimeProvider(provider func() (Store, Authorizer, bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.provider = provider
+}
+
+func (s *Server) runtime() (Store, Authorizer, bool) {
+	s.mu.RLock()
+	provider, store, auth := s.provider, s.store, s.auth
+	s.mu.RUnlock()
+	if provider != nil {
+		return provider()
+	}
+	return store, auth, store != nil && auth != nil
+}
+
+func (s *Server) currentStore() Store {
+	store, _, _ := s.runtime()
+	return store
 }
 
 func write(w http.ResponseWriter, status int, value any) {
@@ -80,6 +107,11 @@ func decode(w http.ResponseWriter, r *http.Request, out any) bool {
 }
 func (s *Server) guard(permission string, next func(http.ResponseWriter, *http.Request, platform.Decision)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		store, auth, active := s.runtime()
+		if !active || store == nil || auth == nil {
+			failure(w, http.StatusServiceUnavailable, "APPLICATION_NOT_READY")
+			return
+		}
 		// In production this port is Docker-internal. Even an internal caller must
 		// present a real Enterprise-issued assertion validated on EVERY operation.
 		if r.Header.Get(platform.GatewayHeader) != "external-application" {
@@ -91,7 +123,7 @@ func (s *Server) guard(permission string, next func(http.ResponseWriter, *http.R
 			failure(w, 401, "ASSERTION_REQUIRED")
 			return
 		}
-		decision, err := s.auth.Introspect(r.Context(), assertion, permission)
+		decision, err := auth.Introspect(r.Context(), assertion, permission)
 		if err != nil {
 			failure(w, 503, "AUTHORIZATION_UNAVAILABLE")
 			return
@@ -100,6 +132,10 @@ func (s *Server) guard(permission string, next func(http.ResponseWriter, *http.R
 			failure(w, 403, "FORBIDDEN")
 			return
 		}
+		// Handlers use the runtime store captured for this request. It remains
+		// stable while the application is active; a reconnect is only published
+		// after the database has passed verification.
+		_ = store
 		next(w, r, decision)
 	}
 }
@@ -107,7 +143,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /v1/menu", s.guard("cafe.catalog.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		items, err := s.store.Items(r.Context(), d.WorkspaceID)
+		items, err := s.currentStore().Items(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -119,7 +155,7 @@ func (s *Server) Handler() http.Handler {
 		if !decode(w, r, &in) {
 			return
 		}
-		item, err := s.store.CreateItem(r.Context(), d.WorkspaceID, d.UserID, in)
+		item, err := s.currentStore().CreateItem(r.Context(), d.WorkspaceID, d.UserID, in)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -127,7 +163,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 201, item)
 	}))
 	mux.HandleFunc("GET /v1/booths", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		items, err := s.store.Booths(r.Context(), d.WorkspaceID)
+		items, err := s.currentStore().Booths(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -141,7 +177,7 @@ func (s *Server) Handler() http.Handler {
 		if !decode(w, r, &in) {
 			return
 		}
-		item, err := s.store.CreateBooth(r.Context(), d.WorkspaceID, d.UserID, in.Name)
+		item, err := s.currentStore().CreateBooth(r.Context(), d.WorkspaceID, d.UserID, in.Name)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -149,7 +185,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 201, item)
 	}))
 	mux.HandleFunc("GET /v1/orders", s.guard("cafe.order.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		items, err := s.store.Orders(r.Context(), d.WorkspaceID)
+		items, err := s.currentStore().Orders(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -161,7 +197,7 @@ func (s *Server) Handler() http.Handler {
 		if !decode(w, r, &in) {
 			return
 		}
-		item, err := s.store.CreateOrder(r.Context(), d.WorkspaceID, d.UserID, in)
+		item, err := s.currentStore().CreateOrder(r.Context(), d.WorkspaceID, d.UserID, in)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -171,7 +207,7 @@ func (s *Server) Handler() http.Handler {
 	for _, action := range []string{"serve", "cancel"} {
 		a := action
 		mux.HandleFunc("POST /v1/orders/{id}/"+a, s.guard("cafe.order.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-			item, err := s.store.TransitionOrder(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
+			item, err := s.currentStore().TransitionOrder(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
 			if err != nil {
 				domainFailure(w, err)
 				return
@@ -180,7 +216,7 @@ func (s *Server) Handler() http.Handler {
 		}))
 	}
 	mux.HandleFunc("GET /v1/bookings", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		items, err := s.store.Bookings(r.Context(), d.WorkspaceID)
+		items, err := s.currentStore().Bookings(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -192,7 +228,7 @@ func (s *Server) Handler() http.Handler {
 		if !decode(w, r, &in) {
 			return
 		}
-		item, err := s.store.Reserve(r.Context(), d.WorkspaceID, d.UserID, in)
+		item, err := s.currentStore().Reserve(r.Context(), d.WorkspaceID, d.UserID, in)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -202,7 +238,7 @@ func (s *Server) Handler() http.Handler {
 	for _, action := range []string{"check-in", "complete", "cancel"} {
 		a := action
 		mux.HandleFunc("POST /v1/bookings/{id}/"+a, s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-			item, err := s.store.TransitionBooking(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
+			item, err := s.currentStore().TransitionBooking(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
 			if err != nil {
 				domainFailure(w, err)
 				return

@@ -106,3 +106,13 @@ func TestUnknownFieldsFailClosed(t *testing.T) {
 		t.Fatalf("workspace spoof not rejected: %d", res.Code)
 	}
 }
+
+func TestBusinessRoutesStayUnavailableBeforeEnrollment(t *testing.T) {
+	app := New(nil, nil, t.TempDir())
+	app.SetRuntimeProvider(func() (Store, Authorizer, bool) { return nil, nil, false })
+	res := httptest.NewRecorder()
+	app.Handler().ServeHTTP(res, httptest.NewRequest("GET", "/v1/menu", nil))
+	if res.Code != 503 {
+		t.Fatalf("pre-enrollment business route returned %d", res.Code)
+	}
+}
