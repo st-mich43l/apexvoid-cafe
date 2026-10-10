@@ -127,7 +127,7 @@ func (in BookingInput) ValidateWithHorizon(now time.Time, horizon time.Duration)
 	if !ValidID(in.BoothID) || !ValidID(in.PackageID) || len(in.GuestName) < 1 || len(in.GuestName) > 120 ||
 		len(in.GuestPhone) > 40 || len(in.GuestEmail) > 254 || len(in.Notes) > 1000 || len(in.Addons) > 20 || len(in.IdempotencyKey) > 128 ||
 		in.PartySize < 1 || in.PartySize > 100 || in.Start.Before(now.Add(-5*time.Minute)) || in.Start.After(now.Add(horizon)) ||
-		dur < 10*time.Minute || dur > 4*time.Hour {
+		dur < 5*time.Minute || dur > 8*time.Hour {
 		return BookingInput{}, ErrInvalid
 	}
 	return in, nil
@@ -282,7 +282,7 @@ type HoldInput struct {
 }
 
 func (in HoldInput) Validate(now time.Time) (HoldInput, error) {
-	if !ValidID(in.BoothID) || !ValidID(in.PackageID) || in.Start.Before(now.Add(-5*time.Minute)) || in.End.Sub(in.Start) < 10*time.Minute || in.End.Sub(in.Start) > 4*time.Hour {
+	if !ValidID(in.BoothID) || !ValidID(in.PackageID) || in.Start.Before(now.Add(-5*time.Minute)) || in.End.Sub(in.Start) < 5*time.Minute || in.End.Sub(in.Start) > 8*time.Hour {
 		return HoldInput{}, ErrInvalid
 	}
 	if in.TTLSeconds == 0 {
