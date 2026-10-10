@@ -22,7 +22,11 @@ const bookingDateTimeInput = (value: string) => {
   const part = (type: string) => parts.find(item => item.type === type)?.value ?? '00'
   return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`
 }
-const vietnamLocalToISO = (value: string) => new Date(`${value}:00+07:00`).toISOString()
+const vietnamLocalToISO = (value: string) => {
+  if (!value) return ''
+  const date = new Date(`${value}:00+07:00`)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : ''
+}
 const dateKey = (date: Date) => { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, '0'); const d = String(date.getDate()).padStart(2, '0'); return `${y}-${m}-${d}` }
 const dateLabel = (date: Date) => date.toLocaleDateString('vi-VN', { weekday: 'short', day: 'numeric', month: 'short' })
 const statusLabel = (status: string) => status.replaceAll('_', ' ')
