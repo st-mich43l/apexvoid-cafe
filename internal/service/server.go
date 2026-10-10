@@ -97,12 +97,20 @@ func (s *Server) advancedStore() (AdvancedStore, bool) {
 	return advanced, ok
 }
 
-func requireAdvanced(w http.ResponseWriter, s *Server) (AdvancedStore, bool) {
+func requireAdvanced(w http.ResponseWriter, r *http.Request, s *Server) (AdvancedStore, bool) {
 	advanced, ok := s.advancedStore()
 	if !ok {
 		failure(w, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED")
+		return nil, false
 	}
-	return advanced, ok
+	if checker, supported := advanced.(interface{ AdvancedBookingReady(context.Context) (bool, error) }); supported {
+		ready, err := checker.AdvancedBookingReady(r.Context())
+		if err != nil || !ready {
+			failure(w, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED")
+			return nil, false
+		}
+	}
+	return advanced, true
 }
 
 func parseBookingFilter(r *http.Request) (domain.BookingFilter, error) {
@@ -298,7 +306,7 @@ func (s *Server) Handler() http.Handler {
 		}))
 	}
 	mux.HandleFunc("GET /v1/bookings", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -315,7 +323,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, items)
 	}))
 	mux.HandleFunc("POST /v1/bookings", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -331,7 +339,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 201, item)
 	}))
 	mux.HandleFunc("GET /v1/bookings/{id}", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -343,7 +351,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, item)
 	}))
 	mux.HandleFunc("GET /v1/bookings/{id}/events", s.guard("cafe.booking.history.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -355,7 +363,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, items)
 	}))
 	mux.HandleFunc("GET /v1/bookings/availability", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -372,7 +380,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, map[string]any{"slots": slots})
 	}))
 	mux.HandleFunc("POST /v1/bookings/{id}/reschedule", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -390,7 +398,7 @@ func (s *Server) Handler() http.Handler {
 	for _, action := range []string{"check-in", "start", "complete", "cancel", "no-show"} {
 		a := action
 		mux.HandleFunc("POST /v1/bookings/{id}/"+a, s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-			advanced, ok := requireAdvanced(w, s)
+			advanced, ok := requireAdvanced(w, r, s)
 			if !ok {
 				return
 			}
@@ -409,7 +417,7 @@ func (s *Server) Handler() http.Handler {
 		}))
 	}
 	mux.HandleFunc("POST /v1/booking-holds", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -425,7 +433,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 201, hold)
 	}))
 	mux.HandleFunc("DELETE /v1/booking-holds/{id}", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -437,7 +445,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, hold)
 	}))
 	mux.HandleFunc("POST /v1/booking-holds/{id}/confirm", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -453,7 +461,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 201, booking)
 	}))
 	mux.HandleFunc("GET /v1/schedules", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -465,7 +473,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, items)
 	}))
 	mux.HandleFunc("PUT /v1/schedules/{weekday}", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -483,7 +491,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, item)
 	}))
 	mux.HandleFunc("GET /v1/blackouts", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -495,7 +503,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, items)
 	}))
 	mux.HandleFunc("POST /v1/blackouts", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -511,7 +519,7 @@ func (s *Server) Handler() http.Handler {
 		write(w, 201, item)
 	}))
 	mux.HandleFunc("DELETE /v1/blackouts/{id}", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
@@ -522,7 +530,7 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	mux.HandleFunc("GET /v1/booths/utilization", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		advanced, ok := requireAdvanced(w, s)
+		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
 		}
