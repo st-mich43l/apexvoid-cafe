@@ -17,6 +17,7 @@ import (
 
 const AssertionHeader = "X-ApexVoid-Identity-Assertion"
 const GatewayHeader = "X-ApexVoid-Gateway"
+const ApplicationDisplayNameHeader = "X-ApexVoid-Application-Display-Name"
 
 type Decision struct {
 	UserID      string `json:"user_id"`

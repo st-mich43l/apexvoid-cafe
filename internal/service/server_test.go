@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
@@ -92,6 +93,31 @@ func TestNoBypassOfGatewayAndPermission(t *testing.T) {
 		t.Fatalf("denied call %d", got)
 	}
 }
+
+func TestContextUsesEnterpriseManagedDisplayName(t *testing.T) {
+	auth := &fakeAuth{allowed: true}
+	app := New(&fakeStore{}, auth, t.TempDir()).Handler()
+	req := httptest.NewRequest("GET", "/v1/context", nil)
+	req.Header.Set(platform.GatewayHeader, "external-application")
+	req.Header.Set(platform.AssertionHeader, "real")
+	req.Header.Set(platform.ApplicationDisplayNameHeader, "HUI moment")
+	res := httptest.NewRecorder()
+	app.ServeHTTP(res, req)
+	if res.Code != 200 {
+		t.Fatalf("context request returned %d", res.Code)
+	}
+	var body struct {
+		ApplicationID string `json:"application_id"`
+		DisplayName   string `json:"display_name"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ApplicationID != "cafe" || body.DisplayName != "HUI moment" {
+		t.Fatalf("unexpected context: %+v", body)
+	}
+}
+
 func TestUnknownFieldsFailClosed(t *testing.T) {
 	auth := &fakeAuth{allowed: true}
 	store := &fakeStore{}

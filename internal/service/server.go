@@ -142,6 +142,13 @@ func (s *Server) guard(permission string, next func(http.ResponseWriter, *http.R
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /v1/context", s.guard("cafe.catalog.read", func(w http.ResponseWriter, r *http.Request, _ platform.Decision) {
+		displayName := strings.TrimSpace(r.Header.Get(platform.ApplicationDisplayNameHeader))
+		if displayName == "" {
+			displayName = "ApexVoid Café"
+		}
+		write(w, http.StatusOK, map[string]string{"application_id": "cafe", "display_name": displayName})
+	}))
 	mux.HandleFunc("GET /v1/menu", s.guard("cafe.catalog.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		items, err := s.currentStore().Items(r.Context(), d.WorkspaceID)
 		if err != nil {
