@@ -37,6 +37,37 @@ Phase 2 extends the original photo-booth proof of concept with:
 - Searchable booking history with immutable activity events, guest contact fields, party size, notes, and status timestamps.
 - Day/week booking calendar, operational dashboard, lifecycle controls, history timeline, operating-hour editor, and blackout management.
 
+## Guest Care Desk
+
+The **Guest care** navigation provides a customer-service workflow for venue
+staff without introducing a separate CRM or storing Enterprise user accounts:
+
+- **Today’s service queue:** confirmed arrivals, checked-in guests, and sessions
+  in progress, always calculated in the venue’s `Asia/Ho_Chi_Minh` timezone
+  regardless of which week staff last viewed on the booking calendar.
+- **Search across booking history:** enter at least two characters of the
+  guest’s name, phone, email, or reservation reference. Results come from the
+  workspace-isolated, paginated booking API, rather than only the visible week.
+- **Guest booking drawer:** direct phone/email links when contact details are
+  available, reference copy, package, party size, preparation notes, activity
+  events, rescheduling, and lifecycle actions.
+- **Accountable cancellations:** staff are prompted to record a reason for
+  cancellations and no-shows; the existing booking activity ledger records the
+  actor and reason on successful transitions.
+- **Responsive design:** touch-friendly call/open-booking actions, compact
+  service cards, accessible loading and error states, and a mobile detail sheet.
+
+Permission checks remain on the server: reading reservations requires
+`photobooth.booking.read`, reading historical events requires
+`photobooth.booking.history.read`, and modifying bookings requires
+`photobooth.booking.manage`. Frontend affordances are not authorization checks.
+Guest contact details are only shown after Enterprise gateway authorization
+and are never included in public links or unauthenticated responses.
+
+This is a **reservation-focused care desk**, not a unified CRM customer profile:
+repeated guest names or phone numbers are not automatically merged into a
+customer identity; messaging/reminders are not sent automatically.
+
 ## Implemented MVP
 
 - **Photobooth counter:** configure drinks, create multi-line orders, exact integer VND totals, track open/served/cancelled. Order line prices are snapshotted transactionally from the owned catalog.
