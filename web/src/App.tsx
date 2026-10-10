@@ -7,7 +7,7 @@ type Item = { id: string; name: string; sku: string; kind: 'drink' | 'photo'; pr
 type Order = { id: string; status: 'open' | 'served' | 'cancelled'; total_vnd: number; note: string; created_at: string }
 type Booth = { id: string; name: string; active: boolean }
 type BookingStatus = 'confirmed' | 'checked_in' | 'in_progress' | 'completed' | 'cancelled' | 'no_show'
-export type Booking = { id: string; booking_ref: string; booth_id: string; booth_name: string; package_id: string; guest_name: string; guest_phone?: string; guest_email?: string; package_name: string; start: string; end: string; status: BookingStatus; price_vnd: number; party_size: number; notes?: string; created_at: string; updated_at: string }
+export type Booking = { id: string; booking_ref: string; booth_id: string; booth_name: string; package_id: string; guest_name: string; guest_phone?: string; guest_email?: string; package_name: string; start: string; end: string; status: BookingStatus; price_vnd: number; party_size: number; notes?: string; cancellation_reason?: string; no_show_reason?: string; created_at: string; updated_at: string }
 type BookingEvent = { id: string; event_type: string; from_status?: string; to_status?: string; reason?: string; changes?: Record<string, unknown>; created_at: string; actor_id: string }
 type Schedule = { id: string; booth_id?: string; weekday: number; open_time: string; close_time: string; closed: boolean; slot_increment_minutes: number; min_advance_minutes: number; max_horizon_days: number; timezone: string }
 type Blackout = { id: string; booth_id?: string; start: string; end: string; reason: string }
@@ -287,7 +287,87 @@ function BookingCreateModal({ booths, photos, selectedDate, setSelectedDate, res
 
 function HistoryView({ bookings, page, total, hasMore, onPageChange, selectedBooking, events, loadEvents }: { bookings: Booking[]; page: number; total: number; hasMore: boolean; onPageChange: (value: number) => void; selectedBooking: Booking | null; events: BookingEvent[]; loadEvents: (booking: Booking) => void }) { return <div className="history-layout"><Pane title="Booking history" extra={<span className="subtle">{total} record{total === 1 ? '' : 's'} · page {page}</span>}><div className="history-table"><div className="history-head"><span>Reference</span><span>Guest</span><span>Session</span><span>Status</span></div>{bookings.map(item => <button className={`history-row${selectedBooking?.id === item.id ? ' is-selected' : ''}`} key={item.id} onClick={() => loadEvents(item)}><b>{item.booking_ref || item.id.slice(0, 8)}</b><span>{item.guest_name}<small>{item.guest_phone || 'No contact'}</small></span><span>{timeText(item.start)}<small>{item.booth_name}</small></span><Pill value={item.status} /></button>)}{!bookings.length && <div className="history-empty"><div className="history-empty-icon"><History size={20} /></div><b>No booking history yet</b><p>Confirmed sessions will appear here once your first reservation is created.</p></div>}</div><div className="history-pagination" aria-label="Booking history pages"><button className="history-page-button" disabled={page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}><ChevronLeft size={14} />Previous</button><span className="history-page-current">Page {page}</span><button className="history-page-button" disabled={!hasMore} onClick={() => onPageChange(page + 1)}>Next<ChevronRight size={14} /></button></div></Pane><Pane title={selectedBooking ? `${selectedBooking.booking_ref} activity` : 'Select a booking'}>{selectedBooking ? <div className="timeline">{events.map(event => <div className="timeline-item" key={event.id}><i /><div><b>{statusLabel(event.event_type)}</b><small>{timeText(event.created_at)} · {event.actor_id.slice(0, 8)}</small>{event.reason && <p>{event.reason}</p>}</div></div>)}{!events.length && <p className="empty">No events recorded.</p>}</div> : <div className="history-selection-empty"><div className="history-empty-icon"><History size={20} /></div><b>Select a booking</b><p>Click a booking to inspect its immutable activity timeline.</p></div>}</Pane></div> }
 
-function BookingDrawer({ booking, events, onClose, transition, reschedule }: { booking: Booking; events: BookingEvent[]; onClose: () => void; transition: (booking: Booking, action: string, reason?: string) => void; reschedule: (booking: Booking, start: string) => void }) { const [start, setStart] = useState(() => bookingDateTimeInput(booking.start)); return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer" onClick={event => event.stopPropagation()}><div className="drawer-head"><div><span className="eyebrow">{booking.booking_ref}</span><h2>{booking.guest_name}</h2><small>{booking.booth_name} · {booking.package_name}</small></div><button className="icon-btn" onClick={onClose} aria-label="Close booking details"><X size={17} /></button></div><div className="drawer-body"><div className="detail-grid"><div><small>Session</small><b>{timeText(booking.start)}</b></div><div><small>Party</small><b>{booking.party_size} guest{booking.party_size === 1 ? '' : 's'}</b></div><div><small>Contact</small><b>{booking.guest_phone || 'Not provided'}</b></div><div><small>Status</small><Pill value={booking.status} /></div></div>{booking.notes && <p className="detail-note">{booking.notes}</p>}<div className="drawer-actions">{booking.status === 'confirmed' && <button onClick={() => transition(booking, 'check-in')}>Check in</button>}{booking.status === 'checked_in' && <button onClick={() => transition(booking, 'start')}>Start session</button>}{booking.status === 'in_progress' && <button onClick={() => transition(booking, 'complete')}>Complete</button>}{['confirmed', 'checked_in'].includes(booking.status) && <button onClick={() => transition(booking, 'cancel', 'Cancelled by staff')}>Cancel</button>}</div>{booking.status === 'confirmed' && <form className="reschedule-form" onSubmit={event => { event.preventDefault(); reschedule(booking, start) }}><label>Reschedule session<input type="datetime-local" value={start} onChange={event => setStart(event.target.value)} /></label><button className="primary" type="submit"><CalendarDays size={15} />Save new time</button></form>}<h3>Activity timeline</h3><div className="timeline">{events.map(event => <div className="timeline-item" key={event.id}><i /><div><b>{statusLabel(event.event_type)}</b><small>{timeText(event.created_at)}</small></div></div>)}</div></div></aside></div> }
+function BookingDrawer({ booking, events, onClose, transition, reschedule, busy }: {
+  booking: Booking; events: BookingEvent[]; onClose: () => void; busy: boolean
+  transition: (booking: Booking, action: string, reason?: string) => void
+  reschedule: (booking: Booking, start: string) => void
+}) {
+  const [start, setStart] = useState(() => bookingDateTimeInput(booking.start))
+  const [pendingAction, setPendingAction] = useState<'cancel' | 'no-show' | null>(null)
+  const [reason, setReason] = useState('')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { setStart(bookingDateTimeInput(booking.start)); setPendingAction(null); setReason('') }, [booking.id, booking.start, booking.status])
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose, busy])
+  const normalizedPhone = (booking.guest_phone ?? '').replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
+  const phoneHref = /^\+?\d{7,15}$/.test(normalizedPhone) ? 'tel:' + normalizedPhone : null
+  const email = booking.guest_email?.trim()
+  const emailHref = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'mailto:' + email : null
+  const copyReference = async () => {
+    if (!booking.booking_ref || !navigator.clipboard) return
+    try { await navigator.clipboard.writeText(booking.booking_ref); setCopied(true) }
+    catch { setCopied(false) }
+  }
+  const recordReason = (event: FormEvent) => {
+    event.preventDefault()
+    if (!pendingAction || !reason.trim()) return
+    transition(booking, pendingAction, reason.trim())
+    setPendingAction(null)
+    setReason('')
+  }
+  return <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
+    <aside className="drawer care-booking-drawer" role="dialog" aria-modal="true" aria-label={`Guest details for ${booking.guest_name}`}>
+      <header className="drawer-head">
+        <div><span className="eyebrow">GUEST BOOKING</span><h2>{booking.guest_name}</h2><small>{booking.booth_name} · {booking.package_name}</small></div>
+        <button className="icon-btn" type="button" disabled={busy} onClick={onClose} aria-label="Close booking details"><X size={17} /></button>
+      </header>
+      <div className="drawer-body">
+        <div className="care-drawer-status"><Pill value={booking.status} /><span>{timeText(booking.start)}</span></div>
+        <div className="care-reference">
+          <div><small>Booking reference</small><strong>{booking.booking_ref || booking.id.slice(0, 8)}</strong></div>
+          <button type="button" disabled={!booking.booking_ref || !navigator.clipboard} onClick={() => void copyReference()}>{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+        <div className="detail-grid">
+          <div><small>Session time</small><b>{timeText(booking.start)}</b></div>
+          <div><small>Party size</small><b>{booking.party_size} guest{booking.party_size === 1 ? '' : 's'}</b></div>
+          <div><small>Contact phone</small><b>{booking.guest_phone || 'Not provided'}</b></div>
+          <div><small>Package</small><b>{booking.package_name}</b></div>
+        </div>
+        <div className="care-contact-actions">
+          {phoneHref && <a href={phoneHref} className="care-button care-button-primary">Call guest</a>}
+          {emailHref && <a href={emailHref} className="care-button care-button-secondary">Email guest</a>}
+          {!phoneHref && !emailHref && <span className="care-hint">No callable phone or valid email is saved for this guest.</span>}
+        </div>
+        {booking.notes && <div className="care-guest-notes"><small>Preparation and guest notes</small><p>{booking.notes}</p></div>}
+        {(booking.cancellation_reason || booking.no_show_reason) && <p className="detail-note">{booking.cancellation_reason || booking.no_show_reason}</p>}
+        <h3>Session actions</h3>
+        <div className="drawer-actions">
+          {booking.status === 'confirmed' && <button type="button" disabled={busy} onClick={() => transition(booking, 'check-in')}>Check in guest</button>}
+          {booking.status === 'checked_in' && <button type="button" disabled={busy} onClick={() => transition(booking, 'start')}>Start session</button>}
+          {booking.status === 'in_progress' && <button type="button" disabled={busy} onClick={() => transition(booking, 'complete')}>Complete session</button>}
+          {booking.status === 'confirmed' && <button type="button" disabled={busy} onClick={() => { setPendingAction('no-show'); setReason('') }}>Mark no-show</button>}
+          {['confirmed', 'checked_in'].includes(booking.status) && <button type="button" disabled={busy} onClick={() => { setPendingAction('cancel'); setReason('') }}>Cancel reservation</button>}
+        </div>
+        {pendingAction && <form className="care-reason-form" onSubmit={recordReason}>
+          <label>{pendingAction === 'cancel' ? 'Cancellation reason' : 'No-show reason'}<textarea required rows={3} maxLength={500} value={reason} placeholder="Record why the booking status is changing…" onChange={event => setReason(event.target.value)} /></label>
+          <div><button type="button" disabled={busy} onClick={() => setPendingAction(null)}>Keep booking</button><button className="care-button-danger" disabled={busy || !reason.trim()} type="submit">{pendingAction === 'cancel' ? 'Confirm cancellation' : 'Confirm no-show'}</button></div>
+        </form>}
+        {booking.status === 'confirmed' && <form className="reschedule-form" onSubmit={event => { event.preventDefault(); reschedule(booking, start) }}>
+          <label>Reschedule session<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label>
+          <button className="primary" type="submit" disabled={busy || start === bookingDateTimeInput(booking.start)}><CalendarDays size={15} />Save new time</button>
+        </form>}
+        <h3>Booking activity</h3>
+        <div className="timeline" aria-label="Booking activity timeline">
+          {events.map(event => <div className="timeline-item" key={event.id}><i /><div><b>{statusLabel(event.event_type)}</b><small>{timeText(event.created_at)}</small>{event.reason && <p>{event.reason}</p>}</div></div>)}
+          {!events.length && <p className="empty">No booking activity to display.</p>}
+        </div>
+      </div>
+    </aside>
+  </div>
+}
 
 function CounterView({ drinks, orders, cart, setCart, cartItems, cartTotal, orderNote, setOrderNote, makeOrder, busy, transitionOrder }: { drinks: Item[]; orders: Order[]; cart: Record<string, number>; setCart: (value: Record<string, number>) => void; cartItems: Item[]; cartTotal: number; orderNote: string; setOrderNote: (value: string) => void; makeOrder: (event: FormEvent) => void; busy: boolean; transitionOrder: (id: string, action: string) => void }) { return <div className="counter-grid"><Pane title="Photobooth menu" extra={<span className="subtle">Prices in VND</span>}><div className="items-grid">{drinks.map(item => <button key={item.id} className="menu-tile selectable" onClick={() => setCart({ ...cart, [item.id]: Math.min(99, (cart[item.id] ?? 0) + 1) })}><div className="tile-icon drink"><Coffee size={22} /></div><b>{item.name}</b><small>{item.sku}</small><strong>{money(item.price_vnd)}</strong><span className="add-hint"><Plus size={13} /> Add</span></button>)}</div>{!drinks.length && <p className="empty">Add drinks in Operations setup to begin.</p>}</Pane><div className="stack"><Pane title="Current cart"><form className="form" onSubmit={makeOrder}>{cartItems.map(item => <div className="cart-line" key={item.id}><div><b>{item.name}</b><small>{money(item.price_vnd)}</small></div><div className="quantity"><button type="button" onClick={() => setCart({ ...cart, [item.id]: Math.max(0, (cart[item.id] ?? 0) - 1) })}>−</button><span>{cart[item.id]}</span><button type="button" onClick={() => setCart({ ...cart, [item.id]: Math.min(99, (cart[item.id] ?? 0) + 1) })}>+</button></div></div>)}{!cartItems.length && <p className="empty">Pick a drink to start an order.</p>}<div className="total"><span>Order total</span><b>{money(cartTotal)}</b></div><label>Order note<input value={orderNote} maxLength={300} onChange={event => setOrderNote(event.target.value)} placeholder="Table number or takeaway" /></label><button className="primary" disabled={!cartItems.length || busy}><Coffee size={17} />Create order</button></form></Pane><Pane title="Recent orders">{orders.map(order => <div className="record" key={order.id}><div><b>#{order.id.slice(0, 8)} · {money(order.total_vnd)}</b><small>{timeText(order.created_at)}</small></div>{order.status === 'open' ? <div className="row-actions"><button onClick={() => transitionOrder(order.id, 'serve')}>Serve</button><button onClick={() => transitionOrder(order.id, 'cancel')}>Cancel</button></div> : <Pill value={order.status} />}</div>)}</Pane></div></div> }
 
