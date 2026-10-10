@@ -115,6 +115,26 @@ func requireAdvanced(w http.ResponseWriter, r *http.Request, s *Server) (Advance
 	return advanced, true
 }
 
+type legacyBookingStore interface {
+	LegacyBookings(context.Context, string) ([]domain.Booking, error)
+	LegacyReserve(context.Context, string, string, domain.BookingInput) (domain.Booking, error)
+	LegacyTransition(context.Context, string, string, string) (domain.Booking, error)
+}
+
+func (s *Server) legacyBookingsPending(ctx context.Context) (legacyBookingStore, bool) {
+	store := s.currentStore()
+	checker, exists := store.(interface{ AdvancedBookingReady(context.Context) (bool, error) })
+	if !exists {
+		return nil, false
+	}
+	ready, err := checker.AdvancedBookingReady(ctx)
+	if err != nil || ready {
+		return nil, false
+	}
+	legacy, ok := store.(legacyBookingStore)
+	return legacy, ok
+}
+
 func parseBookingFilter(r *http.Request) (domain.BookingFilter, error) {
 	f := domain.BookingFilter{Page: 1, PageSize: 50, Guest: r.URL.Query().Get("guest"), BoothID: r.URL.Query().Get("booth_id"), Status: r.URL.Query().Get("status")}
 	if value := r.URL.Query().Get("page"); value != "" {
@@ -308,6 +328,15 @@ func (s *Server) Handler() http.Handler {
 		}))
 	}
 	mux.HandleFunc("GET /v1/bookings", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		if legacy, ok := s.legacyBookingsPending(r.Context()); ok {
+			items, err := legacy.LegacyBookings(r.Context(), d.WorkspaceID)
+			if err != nil {
+				domainFailure(w, err)
+				return
+			}
+			write(w, 200, domain.Page[domain.Booking]{Items: items, Page: 1, PageSize: len(items), Total: len(items)})
+			return
+		}
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -325,6 +354,19 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, items)
 	}))
 	mux.HandleFunc("POST /v1/bookings", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		if legacy, ok := s.legacyBookingsPending(r.Context()); ok {
+			var in domain.BookingInput
+			if !decode(w, r, &in) {
+				return
+			}
+			item, err := legacy.LegacyReserve(r.Context(), d.WorkspaceID, d.UserID, in)
+			if err != nil {
+				domainFailure(w, err)
+				return
+			}
+			write(w, 201, item)
+			return
+		}
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -400,6 +442,15 @@ func (s *Server) Handler() http.Handler {
 	for _, action := range []string{"check-in", "start", "complete", "cancel", "no-show"} {
 		a := action
 		mux.HandleFunc("POST /v1/bookings/{id}/"+a, s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+			if legacy, ok := s.legacyBookingsPending(r.Context()); ok && (a == "check-in" || a == "complete" || a == "cancel") {
+				item, err := legacy.LegacyTransition(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
+				if err != nil {
+					domainFailure(w, err)
+					return
+				}
+				write(w, 200, item)
+				return
+			}
 			advanced, ok := requireAdvanced(w, r, s)
 			if !ok {
 				return
