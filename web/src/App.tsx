@@ -161,8 +161,19 @@ type BookingWorkspaceProps = { booths: Booth[]; photos: Item[]; bookings: Bookin
 function BookingWorkspace(props: BookingWorkspaceProps) {
   const { booths, photos, bookings, dayBookings, days, selectedDate, setSelectedDate, calendarMode, setCalendarMode, bookingFilter, setBookingFilter, reservation, setReservation, slots, availabilityLoading, book, busy, loadEvents, transition } = props
   const [createOpen, setCreateOpen] = useState(false)
+  const calendarDatePickerRef = useRef<HTMLInputElement>(null)
   const closeCreate = useCallback(() => setCreateOpen(false), [])
   const shift = (amount: number) => { const next = new Date(selectedDate); next.setDate(next.getDate() + amount); setSelectedDate(next) }
+  const openCalendarDatePicker = () => {
+    const picker = calendarDatePickerRef.current as (HTMLInputElement & { showPicker?: () => void }) | null
+    if (!picker) return
+    if (picker.showPicker) picker.showPicker()
+    else picker.focus()
+  }
+  const selectCalendarDate = (value: string) => {
+    const next = new Date(`${value}T12:00:00`)
+    if (Number.isFinite(next.getTime())) setSelectedDate(next)
+  }
   const bookingsForDay = (day: Date) => bookings.filter(item => dateKey(new Date(item.start)) === dateKey(day)).sort((a, b) => a.start.localeCompare(b.start))
 
   return <>
@@ -180,7 +191,7 @@ function BookingWorkspace(props: BookingWorkspaceProps) {
     <div className="booking-layout">
       <div className="booking-main">
         <Pane title="Booking calendar" extra={<div className="calendar-header-actions"><button className="today-button calendar-today-button" onClick={() => setSelectedDate(new Date())}>Today</button><div className="calendar-actions"><button className={calendarMode === 'day' ? 'seg-active' : ''} onClick={() => setCalendarMode('day')}>Day</button><button className={calendarMode === 'week' ? 'seg-active' : ''} onClick={() => setCalendarMode('week')}>Week</button></div></div>}>
-          <div className="calendar-toolbar"><button className="icon-btn" onClick={() => shift(calendarMode === 'week' ? -7 : -1)} aria-label="Previous date"><ChevronLeft size={17} /></button><div className="calendar-date-context"><span>{calendarMode === 'week' ? 'Week view' : 'Selected date'}</span><b>{calendarMode === 'day' ? selectedDate.toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long' }) : `${dateLabel(days[0])} – ${dateLabel(days[6])}`}</b></div><button className="icon-btn" onClick={() => shift(calendarMode === 'week' ? 7 : 1)} aria-label="Next date"><ChevronRight size={17} /></button></div>
+          <div className="calendar-toolbar"><button className="icon-btn" onClick={() => shift(calendarMode === 'week' ? -7 : -1)} aria-label="Previous date"><ChevronLeft size={17} /></button><div className="calendar-date-context"><span>{calendarMode === 'week' ? 'Week view' : 'Selected date'}</span><button type="button" className="calendar-date-trigger" onClick={openCalendarDatePicker} aria-label="Choose calendar date"><b>{calendarMode === 'day' ? selectedDate.toLocaleDateString('vi-VN', { weekday: 'long', day: 'numeric', month: 'long' }) : `${dateLabel(days[0])} – ${dateLabel(days[6])}`}</b></button><input ref={calendarDatePickerRef} className="calendar-date-picker" type="date" value={dateKey(selectedDate)} aria-label="Choose calendar date" onChange={event => selectCalendarDate(event.target.value)} /></div><button className="icon-btn" onClick={() => shift(calendarMode === 'week' ? 7 : 1)} aria-label="Next date"><ChevronRight size={17} /></button></div>
           <div className="calendar-legend" aria-label="Booking status legend"><span><i className="legend-dot confirmed" />Confirmed</span><span><i className="legend-dot checked" />Checked in</span><span><i className="legend-dot live" />In progress</span></div>
           <div className={calendarMode === 'week' ? 'week-grid' : 'day-grid'}>{(calendarMode === 'week' ? days : [selectedDate]).map(day => { const dayItems = bookingsForDay(day); return <div className="calendar-day" key={dateKey(day)}><div className="calendar-day-head"><span>{dateLabel(day)}</span><b>{dayItems.length}</b></div>{dayItems.map(item => <button key={item.id} className={`calendar-card status-${item.status}`} onClick={() => loadEvents(item)}><span>{new Date(item.start).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}–{new Date(item.end).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</span><b>{item.guest_name}</b><small>{item.booth_name} · {item.package_name}</small><Pill value={item.status} /></button>)}{!dayItems.length && <div className="calendar-empty"><div className="empty-calendar-icon"><CalendarDays size={20} /></div><b>Floor is open</b><p>No reservations are scheduled for this day.</p><button type="button" onClick={() => setCreateOpen(true)}><Plus size={14} />Schedule a session</button></div>}</div> })}</div>
         </Pane>
