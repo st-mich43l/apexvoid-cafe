@@ -295,7 +295,7 @@ func (s *Store) slotAllowed(ctx context.Context, tx *sql.Tx, workspace, booth st
 	}
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		return domain.ErrInvalid
+		return domain.ErrTimezoneUnavailable
 	}
 	occupiedStart := start.Add(-time.Duration(before) * time.Minute)
 	occupiedEnd := end.Add(time.Duration(after) * time.Minute)
@@ -744,7 +744,7 @@ func (s *Store) Availability(ctx context.Context, workspace string, q domain.Ava
 	}
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		return nil, domain.ErrInvalid
+		return nil, domain.ErrTimezoneUnavailable
 	}
 	day := q.Date.In(loc)
 	if q.Date.IsZero() {
