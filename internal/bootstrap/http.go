@@ -16,15 +16,27 @@ func (m *Manager) Handler(next http.Handler) http.Handler {
 	return mux
 }
 
-func (m *Manager) manifest(w http.ResponseWriter, _ *http.Request) {
-	body, signature, err := m.Manifest()
+func (m *Manager) manifest(w http.ResponseWriter, r *http.Request) {
+	challenge := r.Header.Get("X-ApexVoid-Update-Challenge")
+	var body []byte
+	var signature string
+	var err error
+	if challenge != "" {
+		body, signature, err = m.SignedUpdateManifest(challenge)
+	} else {
+		body, signature, err = m.Manifest()
+	}
 	if err != nil {
 		http.Error(w, "manifest unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-ApexVoid-Manifest-Signature", signature)
+	if challenge != "" {
+		w.Header().Set("X-ApexVoid-Update-Signature", signature)
+	} else {
+		w.Header().Set("X-ApexVoid-Manifest-Signature", signature)
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }
