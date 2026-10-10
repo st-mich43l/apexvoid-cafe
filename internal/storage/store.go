@@ -382,7 +382,7 @@ func (s *Store) CreateBooking(ctx context.Context, workspace, actor string, inpu
 		err = tx.QueryRowContext(ctx, `SELECT id::text FROM cafe_bookings WHERE workspace_id=$1 AND idempotency_key=$2`, workspace, input.IdempotencyKey).Scan(&existing)
 		if err == nil {
 			_ = tx.Rollback()
-			return s.GetBooking(ctx, workspace, existing)
+			return s.idempotentBooking(ctx, workspace, existing, input)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return domain.Booking{}, MapError(err)
@@ -406,6 +406,17 @@ func (s *Store) CreateBooking(ctx context.Context, workspace, actor string, inpu
 		return domain.Booking{}, domain.ErrInvalid
 	}
 	if err != nil {
+		// A second writer may have committed the same key after our lookup.
+		// A conflicting key with different details must never be acknowledged
+		// as a successful booking.
+		var sqlState interface{ SQLState() string }
+		if input.IdempotencyKey != "" && errors.As(err, &sqlState) && sqlState.SQLState() == "23505" {
+			_ = tx.Rollback()
+			var existing string
+			if findErr := s.DB.QueryRowContext(ctx, `SELECT id::text FROM cafe_bookings WHERE workspace_id=$1 AND idempotency_key=$2`, workspace, input.IdempotencyKey).Scan(&existing); findErr == nil {
+				return s.idempotentBooking(ctx, workspace, existing, input)
+			}
+		}
 		return domain.Booking{}, MapError(err)
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO cafe_booking_events(workspace_id,booking_id,actor_id,event_type,to_status) VALUES($1,$2,$3,'created','confirmed')`, workspace, id, actor); err != nil {
@@ -415,6 +426,20 @@ func (s *Store) CreateBooking(ctx context.Context, workspace, actor string, inpu
 		return domain.Booking{}, MapError(err)
 	}
 	return s.GetBooking(ctx, workspace, id)
+}
+
+func (s *Store) idempotentBooking(ctx context.Context, workspace, id string, input domain.BookingInput) (domain.Booking, error) {
+	existing, err := s.GetBooking(ctx, workspace, id)
+	if err != nil {
+		return domain.Booking{}, err
+	}
+	if existing.BoothID != input.BoothID || existing.PackageID != input.PackageID ||
+		existing.GuestName != input.GuestName || existing.GuestPhone != input.GuestPhone ||
+		existing.GuestEmail != input.GuestEmail || existing.PartySize != input.PartySize ||
+		!existing.Start.Equal(input.Start) || !existing.End.Equal(input.End) {
+		return domain.Booking{}, domain.ErrConflict
+	}
+	return existing, nil
 }
 
 func jsonOrEmpty(values []string) string {
