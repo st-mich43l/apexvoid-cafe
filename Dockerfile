@@ -21,7 +21,7 @@ COPY --from=frontend /web/dist /app/web/dist
 COPY db/migrations /app/db/migrations
 USER cafe
 EXPOSE 8090
-ENV LISTEN_ADDR=:8090 WEB_DIST=web/dist SCHEMA_DIR=db/migrations APEXVOID_APP_VERSION=0.2.0 APEXVOID_MIGRATION_BUNDLE_VERSION=2
+ENV LISTEN_ADDR=:8090 WEB_DIST=web/dist SCHEMA_DIR=db/migrations APEXVOID_APP_VERSION=0.2.0 APEXVOID_MIGRATION_BUNDLE_VERSION=0.2.0
 ENV BOOTSTRAP_STATE_DIR=/var/lib/apexvoid/bootstrap DATABASE_HOST=postgres DATABASE_PORT=5432 DATABASE_SSLMODE=disable SERVICE_URL=http://cafe:8090
 HEALTHCHECK --interval=20s --timeout=3s --start-period=10s CMD wget -q -O /dev/null http://127.0.0.1:8090/health || exit 1
 ENTRYPOINT ["/app/cafe"]
