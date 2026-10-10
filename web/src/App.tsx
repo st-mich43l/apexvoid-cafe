@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { enterpriseFetch } from './enterpriseSession'
 import { CalendarDays, Camera, Check, ChevronLeft, ChevronRight, Clock3, Coffee, History, LayoutDashboard, Moon, Plus, RefreshCw, Search, Settings2, Sun, TicketCheck, UserRound, X } from 'lucide-react'
 
 type Item = { id: string; name: string; sku: string; kind: 'drink' | 'photo'; price_vnd: number; duration_minutes: number; active: boolean }
@@ -33,7 +34,7 @@ const statusLabel = (status: string) => status.replaceAll('_', ' ')
 
 async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
   const selectedWorkspace = new URLSearchParams(window.location.search).get('workspace_id') ?? window.localStorage.getItem('apexvoid.active_workspace')
-  const response = await fetch(base + path, {
+  const response = await enterpriseFetch(base + path, {
     method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
     credentials: 'same-origin',
     headers: { Accept: 'application/json', ...(selectedWorkspace ? { 'X-ApexVoid-Workspace': selectedWorkspace } : {}), ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
