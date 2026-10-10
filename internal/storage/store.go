@@ -247,7 +247,9 @@ func (s *Store) ListBookings(ctx context.Context, workspace string, filter domai
 		next++
 	}
 	if filter.Guest != "" {
-		where = append(where, fmt.Sprintf("(b.guest_name ILIKE $%d OR b.guest_phone ILIKE $%d)", next, next))
+		// The care desk searches across all booking dates, not only the
+		// currently loaded calendar. Query remains workspace-scoped.
+		where = append(where, fmt.Sprintf("(b.guest_name ILIKE $%d OR b.guest_phone ILIKE $%d OR b.guest_email ILIKE $%d OR b.booking_ref ILIKE $%d)", next, next, next, next))
 		args = append(args, "%"+filter.Guest+"%")
 		next++
 	}
