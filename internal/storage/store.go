@@ -33,7 +33,15 @@ func MapError(err error) error {
 	return err
 }
 func (s *Store) Items(ctx context.Context, workspace string) ([]domain.Item, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id::text,name,sku,kind,price_vnd,duration_minutes,active FROM cafe_items WHERE workspace_id=$1 ORDER BY kind,name LIMIT 200`, workspace)
+	ready, err := s.AdvancedBookingReady(ctx)
+	if err != nil {
+		return nil, err
+	}
+	duration := "duration_minutes"
+	if !ready {
+		duration = "20 AS duration_minutes"
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id::text,name,sku,kind,price_vnd,`+duration+`,active FROM cafe_items WHERE workspace_id=$1 ORDER BY kind,name LIMIT 200`, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +62,15 @@ func (s *Store) CreateItem(ctx context.Context, workspace, actor string, input d
 		return domain.Item{}, err
 	}
 	var x domain.Item
+	ready, err := s.AdvancedBookingReady(ctx)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if !ready {
+		err = s.DB.QueryRowContext(ctx, `INSERT INTO cafe_items(workspace_id,name,sku,kind,price_vnd,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING id::text,name,sku,kind,price_vnd,active`, workspace, input.Name, input.SKU, input.Kind, input.PriceVND, actor).Scan(&x.ID, &x.Name, &x.SKU, &x.Kind, &x.PriceVND, &x.Active)
+		x.DurationMinutes = 20
+		return x, MapError(err)
+	}
 	err = s.DB.QueryRowContext(ctx, `INSERT INTO cafe_items(workspace_id,name,sku,kind,price_vnd,duration_minutes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id::text,name,sku,kind,price_vnd,duration_minutes,active`, workspace, input.Name, input.SKU, input.Kind, input.PriceVND, input.DurationMinutes, actor).Scan(&x.ID, &x.Name, &x.SKU, &x.Kind, &x.PriceVND, &x.DurationMinutes, &x.Active)
 	return x, MapError(err)
 }
