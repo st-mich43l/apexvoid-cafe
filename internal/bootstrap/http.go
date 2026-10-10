@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"io"
 	"net/http"
-	"path/filepath"
 )
 
 func (m *Manager) Handler(next http.Handler) http.Handler {
@@ -42,8 +41,8 @@ func (m *Manager) manifest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) migration(w http.ResponseWriter, r *http.Request) {
-	path, body := m.Migration()
-	if filepath.Base(path) != r.PathValue("name") {
+	body, ok := m.MigrationNamed(r.PathValue("name"))
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}

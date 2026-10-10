@@ -48,7 +48,7 @@ func TestManifestIsSignedFromPublishedMigrationBytes(t *testing.T) {
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Application.ID != "cafe" || decoded.Application.Version != "0.1.0" || decoded.Database.Name != "apexvoid_cafe" || decoded.Database.Schema != "cafe" || decoded.Database.Role != "apexvoid_cafe" || len(decoded.Migrations) != 1 {
+	if decoded.Application.ID != "cafe" || decoded.Application.Version != "0.2.0" || decoded.Database.Name != "apexvoid_cafe" || decoded.Database.Schema != "cafe" || decoded.Database.Role != "apexvoid_cafe" || len(decoded.Migrations) != 1 {
 		t.Fatalf("unexpected manifest: %s", body)
 	}
 	if decoded.Migrations[0].Path != "/.well-known/apexvoid/migrations/001_cafe.sql" || decoded.Migrations[0].SHA256 == "" {
@@ -64,5 +64,38 @@ func TestManifestIsSignedFromPublishedMigrationBytes(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != 200 || response.Header.Get("X-ApexVoid-Manifest-Signature") != signature {
 		t.Fatalf("unexpected manifest response: %d %s", response.StatusCode, response.Header.Get("X-ApexVoid-Manifest-Signature"))
+	}
+}
+
+func TestManifestDiscoversOrderedMigrationBundle(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "002_advanced_booking.sql"), []byte("second"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "001_cafe.sql"), []byte("first"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := New(Config{StateDir: filepath.Join(dir, "state"), MigrationDir: dir, AppVersion: "0.2.0", MigrationVersion: "0.2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, err := m.Manifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Migrations []struct {
+			Version int    `json:"version"`
+			Path    string `json:"path"`
+		} `json:"migrations"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Migrations) != 2 || decoded.Migrations[0].Version != 1 || decoded.Migrations[1].Version != 2 || decoded.Migrations[1].Path != "/.well-known/apexvoid/migrations/002_advanced_booking.sql" {
+		t.Fatalf("unexpected migration bundle: %s", body)
+	}
+	if published, ok := m.MigrationNamed("002_advanced_booking.sql"); !ok || string(published) != "second" {
+		t.Fatalf("second migration was not published")
 	}
 }

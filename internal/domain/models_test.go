@@ -35,3 +35,34 @@ func TestBooking(t *testing.T) {
 		t.Fatal("negative duration accepted")
 	}
 }
+
+func TestBookingLifecycle(t *testing.T) {
+	valid := [][2]string{
+		{BookingConfirmed, BookingCheckedIn},
+		{BookingCheckedIn, BookingInProgress},
+		{BookingInProgress, BookingCompleted},
+		{BookingConfirmed, BookingCancelled},
+		{BookingConfirmed, BookingNoShow},
+	}
+	for _, transition := range valid {
+		if !CanTransitionBooking(transition[0], transition[1]) {
+			t.Fatalf("expected transition %s -> %s", transition[0], transition[1])
+		}
+	}
+	for _, transition := range [][2]string{{BookingCompleted, BookingCancelled}, {BookingCancelled, BookingConfirmed}, {BookingConfirmed, BookingInProgress}, {BookingNoShow, BookingCompleted}} {
+		if CanTransitionBooking(transition[0], transition[1]) {
+			t.Fatalf("unexpected transition %s -> %s", transition[0], transition[1])
+		}
+	}
+}
+
+func TestHoldValidation(t *testing.T) {
+	now := time.Now().UTC()
+	input, err := (HoldInput{BoothID: sampleID, PackageID: sampleID, Start: now.Add(time.Hour), End: now.Add(90 * time.Minute)}).Validate(now)
+	if err != nil || input.TTLSeconds != 600 {
+		t.Fatalf("unexpected hold validation: %#v %v", input, err)
+	}
+	if _, err := (HoldInput{BoothID: sampleID, PackageID: sampleID, Start: now.Add(time.Hour), End: now.Add(2 * time.Hour), TTLSeconds: 5}).Validate(now); !errors.Is(err, ErrInvalid) {
+		t.Fatal("unsafe hold duration accepted")
+	}
+}

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
 	"github.com/st-mich43l/apexvoid-cafe/internal/platform"
@@ -26,6 +28,29 @@ type Store interface {
 	Bookings(context.Context, string) ([]domain.Booking, error)
 	Reserve(context.Context, string, string, domain.BookingInput) (domain.Booking, error)
 	TransitionBooking(context.Context, string, string, string) (domain.Booking, error)
+}
+
+// AdvancedStore is intentionally separate from the Phase 1 Store contract so
+// the HTTP service can remain bootable and testable while an approved Phase 2
+// migration is still pending.
+type AdvancedStore interface {
+	Store
+	ListBookings(context.Context, string, domain.BookingFilter) (domain.Page[domain.Booking], error)
+	GetBooking(context.Context, string, string) (domain.Booking, error)
+	CreateBooking(context.Context, string, string, domain.BookingInput) (domain.Booking, error)
+	TransitionBookingAdvanced(context.Context, string, string, string, string, string) (domain.Booking, error)
+	RescheduleBooking(context.Context, string, string, string, domain.BookingInput) (domain.Booking, error)
+	Events(context.Context, string, string) ([]domain.BookingEvent, error)
+	CreateHold(context.Context, string, string, domain.HoldInput) (domain.Hold, error)
+	ReleaseHold(context.Context, string, string) (domain.Hold, error)
+	ConfirmHold(context.Context, string, string, string, domain.BookingInput) (domain.Booking, error)
+	Availability(context.Context, string, domain.AvailabilityQuery) ([]domain.AvailabilitySlot, error)
+	Schedules(context.Context, string, string) ([]domain.OperatingSchedule, error)
+	UpsertSchedule(context.Context, string, string, domain.OperatingSchedule) (domain.OperatingSchedule, error)
+	Blackouts(context.Context, string, string) ([]domain.Blackout, error)
+	CreateBlackout(context.Context, string, string, domain.Blackout) (domain.Blackout, error)
+	DeleteBlackout(context.Context, string, string) error
+	Utilization(context.Context, string, time.Time, time.Time) (any, error)
 }
 type Authorizer interface {
 	Introspect(context.Context, string, string) (platform.Decision, error)
@@ -64,6 +89,88 @@ func (s *Server) runtime() (Store, Authorizer, bool) {
 func (s *Server) currentStore() Store {
 	store, _, _ := s.runtime()
 	return store
+}
+
+func (s *Server) advancedStore() (AdvancedStore, bool) {
+	store := s.currentStore()
+	advanced, ok := store.(AdvancedStore)
+	return advanced, ok
+}
+
+func requireAdvanced(w http.ResponseWriter, r *http.Request, s *Server) (AdvancedStore, bool) {
+	advanced, ok := s.advancedStore()
+	if !ok {
+		failure(w, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED")
+		return nil, false
+	}
+	if checker, supported := advanced.(interface {
+		AdvancedBookingReady(context.Context) (bool, error)
+	}); supported {
+		ready, err := checker.AdvancedBookingReady(r.Context())
+		if err != nil || !ready {
+			failure(w, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED")
+			return nil, false
+		}
+	}
+	return advanced, true
+}
+
+type legacyBookingStore interface {
+	LegacyBookings(context.Context, string) ([]domain.Booking, error)
+	LegacyReserve(context.Context, string, string, domain.BookingInput) (domain.Booking, error)
+	LegacyTransition(context.Context, string, string, string) (domain.Booking, error)
+}
+
+func (s *Server) legacyBookingsPending(ctx context.Context) (legacyBookingStore, bool) {
+	store := s.currentStore()
+	checker, exists := store.(interface {
+		AdvancedBookingReady(context.Context) (bool, error)
+	})
+	if !exists {
+		return nil, false
+	}
+	ready, err := checker.AdvancedBookingReady(ctx)
+	if err != nil || ready {
+		return nil, false
+	}
+	legacy, ok := store.(legacyBookingStore)
+	return legacy, ok
+}
+
+func parseBookingFilter(r *http.Request) (domain.BookingFilter, error) {
+	f := domain.BookingFilter{Page: 1, PageSize: 50, Guest: r.URL.Query().Get("guest"), BoothID: r.URL.Query().Get("booth_id"), Status: r.URL.Query().Get("status")}
+	if value := r.URL.Query().Get("page"); value != "" {
+		f.Page, _ = strconv.Atoi(value)
+	}
+	if value := r.URL.Query().Get("page_size"); value != "" {
+		f.PageSize, _ = strconv.Atoi(value)
+	}
+	if value := r.URL.Query().Get("from"); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return f, domain.ErrInvalid
+		}
+		f.From = parsed
+	}
+	if value := r.URL.Query().Get("to"); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return f, domain.ErrInvalid
+		}
+		f.To = parsed
+	}
+	return f.Normalize()
+}
+
+func parseTimeQuery(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, domain.ErrInvalid
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, domain.ErrInvalid
+	}
+	return parsed, nil
 }
 
 func write(w http.ResponseWriter, status int, value any) {
@@ -223,7 +330,25 @@ func (s *Server) Handler() http.Handler {
 		}))
 	}
 	mux.HandleFunc("GET /v1/bookings", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-		items, err := s.currentStore().Bookings(r.Context(), d.WorkspaceID)
+		if legacy, ok := s.legacyBookingsPending(r.Context()); ok {
+			items, err := legacy.LegacyBookings(r.Context(), d.WorkspaceID)
+			if err != nil {
+				domainFailure(w, err)
+				return
+			}
+			write(w, 200, domain.Page[domain.Booking]{Items: items, Page: 1, PageSize: len(items), Total: len(items)})
+			return
+		}
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		filter, err := parseBookingFilter(r)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		items, err := advanced.ListBookings(r.Context(), d.WorkspaceID, filter)
 		if err != nil {
 			domainFailure(w, err)
 			return
@@ -231,21 +356,114 @@ func (s *Server) Handler() http.Handler {
 		write(w, 200, items)
 	}))
 	mux.HandleFunc("POST /v1/bookings", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		if legacy, ok := s.legacyBookingsPending(r.Context()); ok {
+			var in domain.BookingInput
+			if !decode(w, r, &in) {
+				return
+			}
+			item, err := legacy.LegacyReserve(r.Context(), d.WorkspaceID, d.UserID, in)
+			if err != nil {
+				domainFailure(w, err)
+				return
+			}
+			write(w, 201, item)
+			return
+		}
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
 		var in domain.BookingInput
 		if !decode(w, r, &in) {
 			return
 		}
-		item, err := s.currentStore().Reserve(r.Context(), d.WorkspaceID, d.UserID, in)
+		item, err := advanced.CreateBooking(r.Context(), d.WorkspaceID, d.UserID, in)
 		if err != nil {
 			domainFailure(w, err)
 			return
 		}
 		write(w, 201, item)
 	}))
-	for _, action := range []string{"check-in", "complete", "cancel"} {
+	mux.HandleFunc("GET /v1/bookings/{id}", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		item, err := advanced.GetBooking(r.Context(), d.WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, item)
+	}))
+	mux.HandleFunc("GET /v1/bookings/{id}/events", s.guard("cafe.booking.history.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		items, err := advanced.Events(r.Context(), d.WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, items)
+	}))
+	mux.HandleFunc("GET /v1/bookings/availability", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		date, err := parseTimeQuery(r.URL.Query().Get("date"))
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		slots, err := advanced.Availability(r.Context(), d.WorkspaceID, domain.AvailabilityQuery{BoothID: r.URL.Query().Get("booth_id"), PackageID: r.URL.Query().Get("package_id"), Date: date})
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, map[string]any{"slots": slots})
+	}))
+	mux.HandleFunc("POST /v1/bookings/{id}/reschedule", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		var in domain.BookingInput
+		if !decode(w, r, &in) {
+			return
+		}
+		item, err := advanced.RescheduleBooking(r.Context(), d.WorkspaceID, d.UserID, r.PathValue("id"), in)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, item)
+	}))
+	for _, action := range []string{"check-in", "start", "complete", "cancel", "no-show"} {
 		a := action
 		mux.HandleFunc("POST /v1/bookings/{id}/"+a, s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
-			item, err := s.currentStore().TransitionBooking(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
+			if legacy, ok := s.legacyBookingsPending(r.Context()); ok && (a == "check-in" || a == "complete" || a == "cancel") {
+				item, err := legacy.LegacyTransition(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
+				if err != nil {
+					domainFailure(w, err)
+					return
+				}
+				write(w, 200, item)
+				return
+			}
+			advanced, ok := requireAdvanced(w, r, s)
+			if !ok {
+				return
+			}
+			var input struct {
+				Reason string `json:"reason"`
+			}
+			if r.ContentLength != 0 && !decode(w, r, &input) {
+				return
+			}
+			item, err := advanced.TransitionBookingAdvanced(r.Context(), d.WorkspaceID, d.UserID, r.PathValue("id"), a, input.Reason)
 			if err != nil {
 				domainFailure(w, err)
 				return
@@ -253,6 +471,139 @@ func (s *Server) Handler() http.Handler {
 			write(w, 200, item)
 		}))
 	}
+	mux.HandleFunc("POST /v1/booking-holds", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		var in domain.HoldInput
+		if !decode(w, r, &in) {
+			return
+		}
+		hold, err := advanced.CreateHold(r.Context(), d.WorkspaceID, d.UserID, in)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 201, hold)
+	}))
+	mux.HandleFunc("DELETE /v1/booking-holds/{id}", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		hold, err := advanced.ReleaseHold(r.Context(), d.WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, hold)
+	}))
+	mux.HandleFunc("POST /v1/booking-holds/{id}/confirm", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		var in domain.BookingInput
+		if !decode(w, r, &in) {
+			return
+		}
+		booking, err := advanced.ConfirmHold(r.Context(), d.WorkspaceID, d.UserID, r.PathValue("id"), in)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 201, booking)
+	}))
+	mux.HandleFunc("GET /v1/schedules", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		items, err := advanced.Schedules(r.Context(), d.WorkspaceID, r.URL.Query().Get("booth_id"))
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, items)
+	}))
+	mux.HandleFunc("PUT /v1/schedules/{weekday}", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		weekday, _ := strconv.Atoi(r.PathValue("weekday"))
+		var in domain.OperatingSchedule
+		if !decode(w, r, &in) {
+			return
+		}
+		in.Weekday = weekday
+		item, err := advanced.UpsertSchedule(r.Context(), d.WorkspaceID, d.UserID, in)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, item)
+	}))
+	mux.HandleFunc("GET /v1/blackouts", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		items, err := advanced.Blackouts(r.Context(), d.WorkspaceID, r.URL.Query().Get("booth_id"))
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, items)
+	}))
+	mux.HandleFunc("POST /v1/blackouts", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		var in domain.Blackout
+		if !decode(w, r, &in) {
+			return
+		}
+		item, err := advanced.CreateBlackout(r.Context(), d.WorkspaceID, d.UserID, in)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 201, item)
+	}))
+	mux.HandleFunc("DELETE /v1/blackouts/{id}", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		if err := advanced.DeleteBlackout(r.Context(), d.WorkspaceID, r.PathValue("id")); err != nil {
+			domainFailure(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("GET /v1/booths/utilization", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		advanced, ok := requireAdvanced(w, r, s)
+		if !ok {
+			return
+		}
+		from, _ := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+		to, _ := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+		if from.IsZero() {
+			from = time.Now().AddDate(0, 0, -7)
+		}
+		if to.IsZero() {
+			to = time.Now().AddDate(0, 0, 7)
+		}
+		data, err := advanced.Utilization(r.Context(), d.WorkspaceID, from, to)
+		if err != nil {
+			domainFailure(w, err)
+			return
+		}
+		write(w, 200, data)
+	}))
 	assets := http.FileServer(http.Dir(s.assetDir))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/v1/") {
