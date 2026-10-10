@@ -69,4 +69,5 @@ footer{display:flex;justify-content:space-between;gap:10px;padding:18px 38px 22p
 .booking-side>.pane{box-shadow:0 10px 28px #21172b0b}.booking-side>.pane:first-child .pane-head{background:linear-gradient(100deg,color-mix(in srgb,var(--accent) 8%,var(--card)),var(--card))}.booking-tip{box-shadow:0 8px 20px #21172b0a}
 @media(max-width:720px){.booking-command{padding:19px}.booking-command-actions{align-items:stretch}.calendar-date-context{min-width:0}.calendar-date-context b{font-size:13px}.calendar-legend{gap:9px;overflow:auto;white-space:nowrap}.calendar-day{min-height:300px}.calendar-empty{min-height:210px}}
 
-@media(min-width:721px){.booking-command{padding-left:30px;padding-right:30px}.booking-command-actions{margin-left:auto;padding-left:32px;padding-right:4px}.booking-create-button{margin-right:2px}}
+@media(min-width:721px){.booking-command{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;padding-left:30px;padding-right:30px}.booking-command-actions{justify-self:end;margin-left:0;padding-left:32px;padding-right:4px}.booking-create-button{margin-right:2px}}
+@media(min-width:721px) and (max-width:1100px){.booking-command{grid-template-columns:1fr}.booking-command-actions{width:100%;justify-content:flex-end;margin-top:14px;padding-left:0;padding-right:0}}
