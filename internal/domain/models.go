@@ -8,9 +8,9 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("invalid input")
-	ErrConflict = errors.New("resource conflict")
-	ErrNotFound = errors.New("resource not found")
+	ErrInvalid             = errors.New("invalid input")
+	ErrConflict            = errors.New("resource conflict")
+	ErrNotFound            = errors.New("resource not found")
 	ErrTimezoneUnavailable = errors.New("timezone database is unavailable")
 )
 
