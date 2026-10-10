@@ -12,15 +12,6 @@ type CareDeskProps = {
 
 const careStatuses = ['confirmed', 'checked_in', 'in_progress', 'completed', 'cancelled', 'no_show'] as const
 
-function vietnamDateKey(value: string | Date) {
-  const date = value instanceof Date ? value : new Date(value)
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(date)
-  const get = (type: string) => parts.find(part => part.type === type)?.value ?? ''
-  return `${get('year')}-${get('month')}-${get('day')}`
-}
-
 const dateTime = (iso: string) => new Date(iso).toLocaleString('vi-VN', {
   timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit',
   hour: '2-digit', minute: '2-digit',
