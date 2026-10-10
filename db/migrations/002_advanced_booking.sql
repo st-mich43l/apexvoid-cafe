@@ -35,7 +35,12 @@ UPDATE cafe.cafe_bookings
 SET booking_ref='CAF-' || upper(substr(replace(id::text, '-', ''), 1, 10))
 WHERE booking_ref IS NULL OR booking_ref='';
 
+-- Generate an opaque, stable reference on every booking insertion, including
+-- hold confirmation. The existing legacy rows are backfilled above.
+ALTER TABLE cafe.cafe_bookings ALTER COLUMN booking_ref
+ SET DEFAULT ('CAF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 18)));
 ALTER TABLE cafe.cafe_bookings ALTER COLUMN booking_ref SET NOT NULL;
+ALTER TABLE cafe.cafe_bookings ALTER COLUMN status SET DEFAULT 'confirmed';
 ALTER TABLE cafe.cafe_bookings
   ADD CONSTRAINT cafe_bookings_status_check CHECK(status IN ('confirmed','checked_in','in_progress','completed','cancelled','no_show')),
   ADD CONSTRAINT cafe_bookings_party_size_check CHECK(party_size BETWEEN 1 AND 100),
@@ -56,7 +61,7 @@ CREATE TABLE IF NOT EXISTS cafe.cafe_booking_events (
  reason VARCHAR(500) NOT NULL DEFAULT '',
  changes JSONB NOT NULL DEFAULT '{}'::jsonb,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- FOREIGN KEY(booking_id) REFERENCES cafe.cafe_bookings(id) ON DELETE CASCADE,
+ FOREIGN KEY(booking_id,workspace_id) REFERENCES cafe.cafe_bookings(id,workspace_id) ON DELETE CASCADE,
  UNIQUE(id,workspace_id)
 );
 CREATE INDEX IF NOT EXISTS cafe_booking_events_lookup ON cafe.cafe_booking_events(workspace_id,booking_id,created_at DESC);
@@ -68,6 +73,8 @@ CREATE TABLE IF NOT EXISTS cafe.cafe_booking_holds (
  package_id UUID NOT NULL,
  start_at TIMESTAMPTZ NOT NULL,
  end_at TIMESTAMPTZ NOT NULL,
+ buffer_before_minutes INTEGER NOT NULL DEFAULT 0 CHECK(buffer_before_minutes BETWEEN 0 AND 240),
+ buffer_after_minutes INTEGER NOT NULL DEFAULT 0 CHECK(buffer_after_minutes BETWEEN 0 AND 240),
  expires_at TIMESTAMPTZ NOT NULL,
  status VARCHAR(16) NOT NULL DEFAULT 'active' CHECK(status IN ('active','confirmed','released','expired')),
  confirmed_booking_id UUID,
@@ -77,6 +84,7 @@ CREATE TABLE IF NOT EXISTS cafe.cafe_booking_holds (
  UNIQUE(id,workspace_id),
  FOREIGN KEY(booth_id,workspace_id) REFERENCES cafe.cafe_booths(id,workspace_id),
  FOREIGN KEY(package_id,workspace_id) REFERENCES cafe.cafe_items(id,workspace_id),
+ FOREIGN KEY(confirmed_booking_id,workspace_id) REFERENCES cafe.cafe_bookings(id,workspace_id),
  CHECK(end_at > start_at),
  CHECK(expires_at > created_at)
 );
@@ -89,7 +97,7 @@ CREATE TABLE IF NOT EXISTS cafe.cafe_booking_addons (
  addon_name VARCHAR(160) NOT NULL,
  quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity BETWEEN 1 AND 99),
  unit_price_vnd BIGINT NOT NULL DEFAULT 0 CHECK(unit_price_vnd >= 0),
- FOREIGN KEY(booking_id) REFERENCES cafe.cafe_bookings(id) ON DELETE CASCADE,
+ FOREIGN KEY(booking_id,workspace_id) REFERENCES cafe.cafe_bookings(id,workspace_id) ON DELETE CASCADE,
  UNIQUE(id,workspace_id)
 );
 
@@ -163,7 +171,7 @@ BEGIN
   ) OR EXISTS (
    SELECT 1 FROM cafe.cafe_booking_holds hold
     WHERE hold.workspace_id=NEW.workspace_id AND hold.booth_id=NEW.booth_id AND hold.status='active' AND hold.expires_at > now()
-      AND tstzrange(hold.start_at,hold.end_at,'[)') && tstzrange(NEW.start_at - make_interval(mins => NEW.buffer_before_minutes), NEW.end_at + make_interval(mins => NEW.buffer_after_minutes), '[)')
+      AND tstzrange(hold.start_at - make_interval(mins => hold.buffer_before_minutes),hold.end_at + make_interval(mins => hold.buffer_after_minutes),'[)') && tstzrange(NEW.start_at - make_interval(mins => NEW.buffer_before_minutes), NEW.end_at + make_interval(mins => NEW.buffer_after_minutes), '[)')
   ) THEN
    RAISE EXCEPTION 'booking overlaps an existing booking or hold' USING ERRCODE='23P01';
   END IF;
@@ -187,10 +195,10 @@ BEGIN
   IF EXISTS (
    SELECT 1 FROM cafe.cafe_bookings b WHERE b.workspace_id=NEW.workspace_id AND b.booth_id=NEW.booth_id
     AND b.status IN ('confirmed','checked_in','in_progress')
-    AND tstzrange(b.start_at - make_interval(mins => b.buffer_before_minutes), b.end_at + make_interval(mins => b.buffer_after_minutes),'[)') && tstzrange(NEW.start_at,NEW.end_at,'[)')
+    AND tstzrange(b.start_at - make_interval(mins => b.buffer_before_minutes), b.end_at + make_interval(mins => b.buffer_after_minutes),'[)') && tstzrange(NEW.start_at - make_interval(mins => NEW.buffer_before_minutes),NEW.end_at + make_interval(mins => NEW.buffer_after_minutes),'[)')
   ) OR EXISTS (
    SELECT 1 FROM cafe.cafe_booking_holds h WHERE h.workspace_id=NEW.workspace_id AND h.booth_id=NEW.booth_id AND h.id<>NEW.id AND h.status='active' AND h.expires_at>now()
-    AND tstzrange(h.start_at,h.end_at,'[)') && tstzrange(NEW.start_at,NEW.end_at,'[)')
+    AND tstzrange(h.start_at - make_interval(mins => h.buffer_before_minutes),h.end_at + make_interval(mins => h.buffer_after_minutes),'[)') && tstzrange(NEW.start_at - make_interval(mins => NEW.buffer_before_minutes),NEW.end_at + make_interval(mins => NEW.buffer_after_minutes),'[)')
   ) THEN
    RAISE EXCEPTION 'hold overlaps an existing booking or hold' USING ERRCODE='23P01';
   END IF;
@@ -199,7 +207,7 @@ BEGIN
 END;
 $$;
 DROP TRIGGER IF EXISTS cafe_hold_no_overlap ON cafe.cafe_booking_holds;
-CREATE TRIGGER cafe_hold_no_overlap BEFORE INSERT OR UPDATE OF booth_id,start_at,end_at,status,expires_at
+CREATE TRIGGER cafe_hold_no_overlap BEFORE INSERT OR UPDATE OF booth_id,start_at,end_at,status,expires_at,buffer_before_minutes,buffer_after_minutes
  ON cafe.cafe_booking_holds FOR EACH ROW EXECUTE FUNCTION cafe.cafe_hold_no_overlap();
 
 INSERT INTO cafe.cafe_booking_events(workspace_id,booking_id,actor_id,event_type,to_status,reason)
