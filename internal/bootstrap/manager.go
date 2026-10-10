@@ -145,7 +145,7 @@ func New(config Config) (*Manager, bool, error) {
 		config.AppVersion = defaultAppVersion
 	}
 	if config.MigrationVersion == "" {
-		config.MigrationVersion = "2"
+		config.MigrationVersion = "0.2.0"
 	}
 	if config.DatabaseHost == "" {
 		config.DatabaseHost = defaultDatabaseHost
@@ -545,8 +545,8 @@ func verifyDatabase(ctx context.Context, db *sql.DB, database persistedDatabase)
 	verifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var currentDB, currentUser string
-	var tables [11]string
-	err := db.QueryRowContext(verifyCtx, `SELECT current_database(), current_user, COALESCE(to_regclass('cafe.cafe_items')::text,''), COALESCE(to_regclass('cafe.cafe_orders')::text,''), COALESCE(to_regclass('cafe.cafe_order_lines')::text,''), COALESCE(to_regclass('cafe.cafe_booths')::text,''), COALESCE(to_regclass('cafe.cafe_bookings')::text,''), COALESCE(to_regclass('cafe.cafe_booking_events')::text,''), COALESCE(to_regclass('cafe.cafe_booking_holds')::text,''), COALESCE(to_regclass('cafe.cafe_operating_schedules')::text,''), COALESCE(to_regclass('cafe.cafe_schedule_exceptions')::text,''), COALESCE(to_regclass('cafe.cafe_booth_blackouts')::text,'')`).Scan(&currentDB, &currentUser, &tables[0], &tables[1], &tables[2], &tables[3], &tables[4], &tables[5], &tables[6], &tables[7], &tables[8], &tables[9], &tables[10])
+	var tables [5]string
+	err := db.QueryRowContext(verifyCtx, `SELECT current_database(), current_user, COALESCE(to_regclass('cafe.cafe_items')::text,''), COALESCE(to_regclass('cafe.cafe_orders')::text,''), COALESCE(to_regclass('cafe.cafe_order_lines')::text,''), COALESCE(to_regclass('cafe.cafe_booths')::text,''), COALESCE(to_regclass('cafe.cafe_bookings')::text,'')`).Scan(&currentDB, &currentUser, &tables[0], &tables[1], &tables[2], &tables[3], &tables[4])
 	if err != nil {
 		return err
 	}
