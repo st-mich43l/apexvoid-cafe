@@ -26,6 +26,11 @@ ALTER TABLE cafe.cafe_items
 ALTER TABLE cafe.cafe_items DROP CONSTRAINT IF EXISTS cafe_items_duration_minutes_check;
 ALTER TABLE cafe.cafe_items ADD CONSTRAINT cafe_items_duration_minutes_check CHECK(duration_minutes BETWEEN 5 AND 480);
 
+-- The original maximum was 2h, while the photo catalog now supports 8h
+-- packages. Preserve the positive-duration invariant during this upgrade.
+ALTER TABLE cafe.cafe_bookings DROP CONSTRAINT IF EXISTS cafe_bookings_check;
+ALTER TABLE cafe.cafe_bookings ADD CONSTRAINT cafe_bookings_duration_check
+ CHECK(end_at > start_at AND end_at <= start_at + interval '8 hours');
 ALTER TABLE cafe.cafe_bookings DROP CONSTRAINT IF EXISTS cafe_bookings_status_check;
 ALTER TABLE cafe.cafe_bookings DROP CONSTRAINT IF EXISTS cafe_bookings_party_size_check;
 ALTER TABLE cafe.cafe_bookings DROP CONSTRAINT IF EXISTS cafe_bookings_buffer_before_minutes_check;
@@ -46,6 +51,9 @@ ALTER TABLE cafe.cafe_bookings
   ADD CONSTRAINT cafe_bookings_party_size_check CHECK(party_size BETWEEN 1 AND 100),
   ADD CONSTRAINT cafe_bookings_buffer_before_minutes_check CHECK(buffer_before_minutes BETWEEN 0 AND 240),
   ADD CONSTRAINT cafe_bookings_buffer_after_minutes_check CHECK(buffer_after_minutes BETWEEN 0 AND 240);
+-- Composite workspace FKs below require a unique referenced key.
+CREATE UNIQUE INDEX IF NOT EXISTS cafe_bookings_workspace_identity_unique
+ ON cafe.cafe_bookings(id,workspace_id);
 CREATE UNIQUE INDEX IF NOT EXISTS cafe_bookings_ref_unique ON cafe.cafe_bookings(workspace_id, booking_ref);
 CREATE UNIQUE INDEX IF NOT EXISTS cafe_bookings_idempotency_unique ON cafe.cafe_bookings(workspace_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key <> '';
 CREATE INDEX IF NOT EXISTS cafe_bookings_search ON cafe.cafe_bookings(workspace_id, start_at, status, booth_id);
@@ -119,7 +127,7 @@ CREATE TABLE IF NOT EXISTS cafe.cafe_operating_schedules (
  updated_by UUID,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- UNIQUE(workspace_id,booth_id,weekday),
+ UNIQUE NULLS NOT DISTINCT (workspace_id,booth_id,weekday),
  FOREIGN KEY(booth_id,workspace_id) REFERENCES cafe.cafe_booths(id,workspace_id) ON DELETE CASCADE
 );
 
@@ -134,7 +142,7 @@ CREATE TABLE IF NOT EXISTS cafe.cafe_schedule_exceptions (
  reason VARCHAR(300) NOT NULL DEFAULT '',
  created_by UUID NOT NULL,
  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- UNIQUE(workspace_id,booth_id,local_date),
+ UNIQUE NULLS NOT DISTINCT (workspace_id,booth_id,local_date),
  FOREIGN KEY(booth_id,workspace_id) REFERENCES cafe.cafe_booths(id,workspace_id) ON DELETE CASCADE
 );
 
