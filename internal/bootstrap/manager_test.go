@@ -75,7 +75,7 @@ func TestManifestDiscoversOrderedMigrationBundle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "001_cafe.sql"), []byte("first"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m, _, err := New(Config{StateDir: filepath.Join(dir, "state"), MigrationDir: dir, AppVersion: "0.2.0", MigrationVersion: "2"})
+	m, _, err := New(Config{StateDir: filepath.Join(dir, "state"), MigrationDir: dir, AppVersion: "0.2.0", MigrationVersion: "0.2.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
