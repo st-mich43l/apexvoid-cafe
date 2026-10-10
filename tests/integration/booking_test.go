@@ -150,7 +150,9 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 		}
 		found := false
 		for _, match := range results.Items {
-			if match.ID == created.ID { found = true }
+			if match.ID == created.ID {
+				found = true
+			}
 		}
 		if !found {
 			t.Fatalf("care search %q failed to locate booking %s", term, created.ID)
