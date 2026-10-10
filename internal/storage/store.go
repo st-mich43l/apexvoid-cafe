@@ -266,39 +266,59 @@ func (s *Store) GetBooking(ctx context.Context, workspace, id string) (domain.Bo
 	return scanBooking(s.DB.QueryRowContext(ctx, `SELECT `+bookingFields+` FROM cafe_bookings b JOIN cafe_booths booth ON booth.id=b.booth_id AND booth.workspace_id=b.workspace_id WHERE b.workspace_id=$1 AND b.id=$2`, workspace, id))
 }
 
-func (s *Store) slotAllowed(ctx context.Context, tx *sql.Tx, workspace, booth string, start, end time.Time) error {
-	var timezone, open, close string
-	var closed bool
-	var minAdvance, horizon int
-	weekday := int(start.In(time.FixedZone("ICT", 7*60*60)).Weekday())
-	err := tx.QueryRowContext(ctx, `SELECT timezone,to_char(open_time,'HH24:MI'),to_char(close_time,'HH24:MI'),closed,min_advance_minutes,max_horizon_days FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND weekday=$3 ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth, weekday).Scan(&timezone, &open, &close, &closed, &minAdvance, &horizon)
+// slotAllowed checks the full occupied interval using the booth's calendar.
+func (s *Store) slotAllowed(ctx context.Context, tx *sql.Tx, workspace, booth string, start, end time.Time, before, after int) error {
+	var timezone string
+	err := tx.QueryRowContext(ctx, `SELECT timezone FROM cafe_operating_schedules WHERE workspace_id=$1
+ AND (booth_id=$2 OR booth_id IS NULL) ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth).Scan(&timezone)
 	if errors.Is(err, sql.ErrNoRows) {
-		timezone, open, close, minAdvance, horizon = "Asia/Ho_Chi_Minh", "09:00", "21:00", 30, 90
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		timezone = "Asia/Ho_Chi_Minh"
+	} else if err != nil {
 		return MapError(err)
 	}
-	loc, locErr := time.LoadLocation(timezone)
-	if locErr != nil {
-		loc, _ = time.LoadLocation("Asia/Ho_Chi_Minh")
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return domain.ErrInvalid
 	}
-	localStart, localEnd := start.In(loc), end.In(loc)
-	if closed || localStart.Format("15:04") < open || localEnd.Format("15:04") > close || localStart.Before(time.Now().In(loc).Add(time.Duration(minAdvance)*time.Minute)) || localStart.After(time.Now().In(loc).AddDate(0, 0, horizon)) {
+	occupiedStart := start.Add(-time.Duration(before) * time.Minute)
+	occupiedEnd := end.Add(time.Duration(after) * time.Minute)
+	localStart, localEnd := occupiedStart.In(loc), occupiedEnd.In(loc)
+	if localStart.YearDay() != localEnd.YearDay() || localStart.Year() != localEnd.Year() {
 		return domain.ErrConflict
+	}
+	var open, close string
+	var closed bool
+	var minAdvance, horizon int
+	err = tx.QueryRowContext(ctx, `SELECT to_char(open_time,'HH24:MI'),to_char(close_time,'HH24:MI'),closed,min_advance_minutes,max_horizon_days
+ FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND weekday=$3
+ ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth, int(start.In(loc).Weekday())).Scan(&open, &close, &closed, &minAdvance, &horizon)
+	if errors.Is(err, sql.ErrNoRows) {
+		open, close, minAdvance, horizon = "09:00", "21:00", 30, 90
+	} else if err != nil {
+		return MapError(err)
 	}
 	var exceptionClosed bool
 	var exceptionOpen, exceptionClose string
-	err = tx.QueryRowContext(ctx, `SELECT closed,coalesce(to_char(open_time,'HH24:MI'),''),coalesce(to_char(close_time,'HH24:MI'),'') FROM cafe_schedule_exceptions WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND local_date=$3 ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth, localStart.Format("2006-01-02")).Scan(&exceptionClosed, &exceptionOpen, &exceptionClose)
+	err = tx.QueryRowContext(ctx, `SELECT closed,coalesce(to_char(open_time,'HH24:MI'),''),coalesce(to_char(close_time,'HH24:MI'),'')
+ FROM cafe_schedule_exceptions WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND local_date=$3
+ ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth, start.In(loc).Format("2006-01-02")).Scan(&exceptionClosed, &exceptionOpen, &exceptionClose)
 	if err == nil {
-		if exceptionClosed || (exceptionOpen != "" && (localStart.Format("15:04") < exceptionOpen || localEnd.Format("15:04") > exceptionClose)) {
-			return domain.ErrConflict
+		closed = exceptionClosed
+		if exceptionOpen != "" && exceptionClose != "" {
+			open, close = exceptionOpen, exceptionClose
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return MapError(err)
 	}
+	if closed || localStart.Format("15:04") < open || localEnd.Format("15:04") > close ||
+		start.Before(time.Now().Add(time.Duration(minAdvance)*time.Minute)) ||
+		start.After(time.Now().In(loc).AddDate(0, 0, horizon)) {
+		return domain.ErrConflict
+	}
 	var blocked bool
-	err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cafe_booth_blackouts WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND tstzrange(start_at,end_at,'[)') && tstzrange($3,$4,'[)'))`, workspace, booth, start, end).Scan(&blocked)
-	if err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cafe_booth_blackouts WHERE workspace_id=$1
+ AND (booth_id=$2 OR booth_id IS NULL)
+ AND tstzrange(start_at,end_at,'[)') && tstzrange($3,$4,'[)'))`, workspace, booth, occupiedStart, occupiedEnd).Scan(&blocked); err != nil {
 		return MapError(err)
 	}
 	if blocked {
@@ -323,9 +343,6 @@ func packageDuration(ctx context.Context, tx *sql.Tx, workspace, packageID strin
 }
 
 func applyScheduleBuffers(ctx context.Context, tx *sql.Tx, workspace, booth string, start time.Time, input *domain.BookingInput) error {
-	if input.BufferBefore != 0 || input.BufferAfter != 0 {
-		return nil
-	}
 	var timezone string
 	err := tx.QueryRowContext(ctx, `SELECT timezone FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth).Scan(&timezone)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -340,6 +357,7 @@ func applyScheduleBuffers(ctx context.Context, tx *sql.Tx, workspace, booth stri
 	var before, after int
 	err = tx.QueryRowContext(ctx, `SELECT buffer_before_minutes,buffer_after_minutes FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND weekday=$3 ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, booth, int(start.In(loc).Weekday())).Scan(&before, &after)
 	if errors.Is(err, sql.ErrNoRows) {
+		input.BufferBefore, input.BufferAfter = 0, 0
 		return nil
 	}
 	if err != nil {
@@ -376,7 +394,7 @@ func (s *Store) CreateBooking(ctx context.Context, workspace, actor string, inpu
 	if err = applyScheduleBuffers(ctx, tx, workspace, input.BoothID, input.Start, &input); err != nil {
 		return domain.Booking{}, err
 	}
-	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End); err != nil {
+	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End, input.BufferBefore, input.BufferAfter); err != nil {
 		return domain.Booking{}, err
 	}
 	var id string
@@ -501,7 +519,7 @@ func (s *Store) RescheduleBooking(ctx context.Context, workspace, actor, id stri
 	if err = applyScheduleBuffers(ctx, tx, workspace, input.BoothID, input.Start, &input); err != nil {
 		return domain.Booking{}, err
 	}
-	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End); err != nil {
+	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End, input.BufferBefore, input.BufferAfter); err != nil {
 		return domain.Booking{}, err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE cafe_bookings SET booth_id=$3,package_id=$4,start_at=$5,end_at=$6,package_name=(SELECT name FROM cafe_items WHERE id=$4 AND workspace_id=$1),price_vnd=(SELECT price_vnd FROM cafe_items WHERE id=$4 AND workspace_id=$1),guest_name=$7,guest_phone=$8,guest_email=$9,party_size=$10,notes=$11,addons=$12,buffer_before_minutes=$13,buffer_after_minutes=$14,updated_by=$15,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspace, id, input.BoothID, input.PackageID, input.Start, input.End, input.GuestName, input.GuestPhone, input.GuestEmail, input.PartySize, input.Notes, jsonOrEmpty(input.Addons), input.BufferBefore, input.BufferAfter, actor)
@@ -554,7 +572,7 @@ func (s *Store) CreateHold(ctx context.Context, workspace, actor string, input d
 	if err = packageDuration(ctx, tx, workspace, input.PackageID, input.Start, input.End); err != nil {
 		return domain.Hold{}, err
 	}
-	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End); err != nil {
+	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End, input.BufferBefore, input.BufferAfter); err != nil {
 		return domain.Hold{}, err
 	}
 	var h domain.Hold
