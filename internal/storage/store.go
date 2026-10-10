@@ -417,12 +417,12 @@ func (s *Store) CreateBooking(ctx context.Context, workspace, actor string, inpu
 	return s.GetBooking(ctx, workspace, id)
 }
 
-func jsonOrEmpty(values []string) []byte {
+func jsonOrEmpty(values []string) string {
 	if values == nil {
-		return []byte("[]")
+		return "[]"
 	}
 	b, _ := json.Marshal(values)
-	return b
+	return string(b)
 }
 
 func (s *Store) Reserve(ctx context.Context, workspace, actor string, input domain.BookingInput) (domain.Booking, error) {
