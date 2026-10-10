@@ -108,9 +108,9 @@ This is a **staff-operated proof of concept** for combining a café and self-pho
 
 Café now supports the Enterprise **reviewed application upgrade** manifest
 challenge. An enrolled Café service answers
-\`GET /.well-known/apexvoid/manifest.json\` with the exact JSON manifest and
-\`X-ApexVoid-Update-Signature\` only when Enterprise supplies a fresh
-\`X-ApexVoid-Update-Challenge\` header. Signature input is the existing
+`GET /.well-known/apexvoid/manifest.json` with the exact JSON manifest and
+`X-ApexVoid-Update-Signature` only when Enterprise supplies a fresh
+`X-ApexVoid-Update-Challenge` header. Signature input is the existing
 enrollment-persisted permanent service credential (SHA-256-derived HMAC key),
 the domain-separated update context, the challenge and the raw manifest bytes.
 No permanent credential, enrollment code or database secret is sent over HTTP.
