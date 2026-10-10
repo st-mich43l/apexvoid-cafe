@@ -23,11 +23,21 @@ The Café service has no PostgreSQL container and never creates databases, roles
 
 **Important catalog boundary:** Enterprise's built-in ERP catalog is not directly accessible through the external integration v1 business-data API. This app therefore owns its initial *café-specific menu* and *photo package catalog*. Syncing orders with ERP accounting/inventory requires future explicit, authorized service-to-service business APIs; do **not** access the Enterprise PostgreSQL tables.
 
+## Implemented booking management
+
+Phase 2 extends the original photo-booth proof of concept with:
+
+- Confirmed → checked-in → in-progress → completed lifecycle with cancellation and no-show branches.
+- Backend availability calculated from workspace schedules, package duration, active bookings, temporary holds, blackouts, minimum notice and future horizon.
+- Short-lived holds, transactional hold confirmation, idempotency keys, and PostgreSQL advisory-lock overlap protection including preparation/cleanup buffers.
+- Searchable booking history with immutable activity events, guest contact fields, party size, notes, and status timestamps.
+- Day/week booking calendar, operational dashboard, lifecycle controls, history timeline, operating-hour editor, and blackout management.
+
 ## Implemented MVP
 
 - **Café counter:** configure drinks, create multi-line orders, exact integer VND totals, track open/served/cancelled. Order line prices are snapshotted transactionally from the owned catalog.
-- **Photo booths:** configure shooting stations, create timed sessions using configured photo packages, check in and complete or cancel bookings.
-- **No double-booking:** PostgreSQL GiST exclusion constraint rejects overlap for a given booth, even during concurrent requests. Cancelled and completed slots are excluded; adjacent time intervals are allowed.
+- **Photo booths:** configure shooting stations, create timed sessions using configured photo packages, check in, start, complete, cancel, or mark bookings as no-shows.
+- **No double-booking:** PostgreSQL transaction-scoped advisory locks plus schema triggers reject overlapping buffered bookings and active holds, even during concurrent requests. Cancelled, completed and no-show slots are excluded; adjacent time intervals are allowed.
 - **Unified interface:** responsive React UI with light/dark toggle, order dashboard, POS counter, booth calendar list, and menu setup.
 - **Security:** every API operation requires `X-ApexVoid-Identity-Assertion` from Enterprise and performs its own permission-specific introspection. Workspace/user supplied in payloads are rejected. Tenant isolation uses workspace IDs returned by Enterprise.
 
@@ -78,10 +88,16 @@ The current Enterprise master decoder strictly accepts permission entries using 
 | `cafe.order.read` | View orders |
 | `cafe.order.manage` | Create, serve or cancel orders |
 | `cafe.booking.read` | View booths and sessions |
-| `cafe.booking.manage` | Reserve, check in, complete or cancel sessions |
+| `cafe.booking.manage` | Reserve, check in, start, complete, cancel or mark sessions |
+| `cafe.booking.history.read` | View immutable booking activity |
+| `cafe.booking.schedule.manage` | Configure hours, closures and blackouts |
 | `cafe.booth.manage` | Create new booths |
 
-The application entry policy is **any** of menu/order/booking read. Each API endpoint checks its *own* permission through introspection. The UI has limited permission awareness: operations without grants will be rejected by the backend, and administrators should grant the role's intended operations together for a complete experience.
+The application entry policy is **any** of menu/order/booking read, booking history read, or schedule management. Each API endpoint checks its *own* permission through introspection. The UI has limited permission awareness: operations without grants will be rejected by the backend, and administrators should grant the role's intended operations together for a complete experience.
+
+### Booking API
+
+The booking API is workspace-scoped by the Enterprise identity assertion. Important routes include `GET /v1/bookings`, `GET /v1/bookings/availability`, `POST /v1/bookings`, `POST /v1/booking-holds`, `POST /v1/booking-holds/{id}/confirm`, `POST /v1/bookings/{id}/reschedule`, lifecycle actions under `/v1/bookings/{id}/`, `GET /v1/bookings/{id}/events`, `/v1/schedules`, `/v1/blackouts`, and `/v1/booths/utilization`. Conflicts return HTTP 409; invalid transitions are rejected without changing the booking.
 
 ## Development and tests
 
@@ -96,7 +112,9 @@ For local testing, only the domain, gateway-client and HTTP authorization tests 
 go test ./internal/domain ./internal/platform ./internal/service
 ```
 
-The Go image build downloads `pgx/v5` and the public Enterprise integration SDK; the frontend image build downloads npm dependencies. Enterprise owns the migration ledger and applies version 1 in a transaction guarded by an advisory lock. The Café only verifies the expected database identity and schema after enrollment. Any future schema changes should use a new migration version, not edit the applied SQL. Existing legacy `cafe-db-data` volumes are not removed automatically; back them up and migrate deliberately before deleting them.
+The Go image build downloads `pgx/v5` and the public Enterprise integration SDK; the frontend image build downloads npm dependencies. Enterprise owns the migration ledger and applies versions 1 and 2 in order in a transaction guarded by an advisory lock. The Café publishes every immutable SQL artifact under `/.well-known/apexvoid/migrations/` and only verifies the expected database identity/schema after the approved upgrade is applied. Any future schema changes should use a new migration version, not edit an applied SQL file. Existing legacy `cafe-db-data` volumes are not removed automatically; back them up and migrate deliberately before deleting them.
+
+For a staged Phase 2 release, deploy the new Café image first. It remains HTTP-available but reports `APPLICATION_NOT_READY` for business routes until Enterprise approves and applies `002_advanced_booking.sql`; the new container does not create a second database or run migrations itself. After approval, the enrollment verifier sees the Phase 2 tables and activates the service.
 
 **Do not publish port 8090 directly** while using the Enterprise assertion-based trust model. There is no stand-alone login for direct access; the Enterprise gateway is required.
 

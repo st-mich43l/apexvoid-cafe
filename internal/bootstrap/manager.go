@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -29,7 +30,7 @@ const (
 	applicationID       = "cafe"
 	contractVersion     = "v1"
 	manifestVersion     = "v1"
-	defaultAppVersion   = "0.1.0"
+	defaultAppVersion   = "0.2.0"
 	defaultStateDir     = "/var/lib/apexvoid/bootstrap"
 	defaultDatabaseHost = "postgres"
 	defaultDatabasePort = 5432
@@ -38,6 +39,7 @@ const (
 type Config struct {
 	StateDir         string
 	MigrationPath    string
+	MigrationDir     string
 	AppVersion       string
 	MigrationVersion string
 	DatabaseHost     string
@@ -119,23 +121,31 @@ type Manager struct {
 	manifestJSON   []byte
 	migrationPath  string
 	migrationBytes []byte
+	migrations     []publishedMigration
+	migrationFiles map[string][]byte
 	store          *storage.Store
 	authorizer     *platform.Client
 	db             *sql.DB
+}
+
+type publishedMigration struct {
+	Version int
+	Path    string
+	Bytes   []byte
 }
 
 func New(config Config) (*Manager, bool, error) {
 	if config.StateDir == "" {
 		config.StateDir = defaultStateDir
 	}
-	if config.MigrationPath == "" {
-		config.MigrationPath = "db/migrations/001_cafe.sql"
+	if config.MigrationDir == "" && config.MigrationPath == "" {
+		config.MigrationDir = "db/migrations"
 	}
 	if config.AppVersion == "" {
 		config.AppVersion = defaultAppVersion
 	}
 	if config.MigrationVersion == "" {
-		config.MigrationVersion = config.AppVersion
+		config.MigrationVersion = "2"
 	}
 	if config.DatabaseHost == "" {
 		config.DatabaseHost = defaultDatabaseHost
@@ -162,15 +172,19 @@ func New(config Config) (*Manager, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	migrationBytes, err := os.ReadFile(config.MigrationPath)
+	migrations, err := discoverMigrations(config)
 	if err != nil {
-		return nil, false, fmt.Errorf("read migration artifact: %w", err)
+		return nil, false, fmt.Errorf("read migration artifacts: %w", err)
 	}
-	manifestJSON, migrationPath, err := buildManifest(config, migrationBytes)
+	manifestJSON, migrationPath, err := buildManifest(config, migrations)
 	if err != nil {
 		return nil, false, err
 	}
-	m := &Manager{config: config, state: state, manifestJSON: manifestJSON, migrationPath: migrationPath, migrationBytes: migrationBytes}
+	files := make(map[string][]byte, len(migrations))
+	for _, item := range migrations {
+		files[filepath.Base(item.Path)] = append([]byte(nil), item.Bytes...)
+	}
+	m := &Manager{config: config, state: state, manifestJSON: manifestJSON, migrationPath: migrationPath, migrationBytes: append([]byte(nil), migrations[0].Bytes...), migrations: migrations, migrationFiles: files}
 	if created {
 		m.state.Phase = "BOOTSTRAP"
 		if err := m.saveLocked(); err != nil {
@@ -241,9 +255,57 @@ func newSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-func buildManifest(config Config, migration []byte) ([]byte, string, error) {
-	checksum := fmt.Sprintf("%x", sha256.Sum256(migration))
-	path := "/.well-known/apexvoid/migrations/" + filepath.Base(config.MigrationPath)
+func discoverMigrations(config Config) ([]publishedMigration, error) {
+	if config.MigrationPath != "" {
+		body, err := os.ReadFile(config.MigrationPath)
+		if err != nil {
+			return nil, err
+		}
+		return []publishedMigration{{Version: migrationNumber(filepath.Base(config.MigrationPath)), Path: filepath.Base(config.MigrationPath), Bytes: body}}, nil
+	}
+	entries, err := os.ReadDir(config.MigrationDir)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]publishedMigration, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
+			continue
+		}
+		body, readErr := os.ReadFile(filepath.Join(config.MigrationDir, entry.Name()))
+		if readErr != nil {
+			return nil, readErr
+		}
+		items = append(items, publishedMigration{Version: migrationNumber(entry.Name()), Path: entry.Name(), Bytes: body})
+	}
+	if len(items) == 0 {
+		return nil, errors.New("no SQL migration artifacts found")
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Version == items[j].Version {
+			return items[i].Path < items[j].Path
+		}
+		return items[i].Version < items[j].Version
+	})
+	return items, nil
+}
+
+func migrationNumber(name string) int {
+	value := 0
+	for _, ch := range name {
+		if ch < '0' || ch > '9' {
+			break
+		}
+		value = value*10 + int(ch-'0')
+	}
+	return value
+}
+
+func buildManifest(config Config, migrations []publishedMigration) ([]byte, string, error) {
+	manifestMigrations := make([]manifestMigration, 0, len(migrations))
+	for _, item := range migrations {
+		manifestMigrations = append(manifestMigrations, manifestMigration{Version: item.Version, Path: "/.well-known/apexvoid/migrations/" + filepath.Base(item.Path), SHA256: fmt.Sprintf("%x", sha256.Sum256(item.Bytes))})
+	}
 	m := manifest{
 		ManifestVersion: manifestVersion,
 		Application:     manifestApplication{ID: applicationID, DisplayName: "ApexVoid Café", Description: "Coffee counter and photo booth booking", Version: config.AppVersion, APIContractVersion: contractVersion},
@@ -256,13 +318,15 @@ func buildManifest(config Config, migration []byte) ([]byte, string, error) {
 			{Name: "cafe.order.manage", DisplayName: "Manage Café Orders", Description: "Create and fulfill café orders", Scope: "workspace"},
 			{Name: "cafe.booking.read", DisplayName: "View Photo Booth Bookings", Description: "View photo booth bookings", Scope: "workspace"},
 			{Name: "cafe.booking.manage", DisplayName: "Manage Photo Booth Bookings", Description: "Reserve and manage photo booth sessions", Scope: "workspace"},
+			{Name: "cafe.booking.history.read", DisplayName: "View Booking History", Description: "View immutable booking activity history", Scope: "workspace"},
+			{Name: "cafe.booking.schedule.manage", DisplayName: "Manage Booking Schedule", Description: "Configure opening hours and booth blackouts", Scope: "workspace"},
 			{Name: "cafe.booth.manage", DisplayName: "Configure Photo Booths", Description: "Configure café photo booths", Scope: "workspace"},
 		},
-		Access:     manifestAccess{Match: "any", Permissions: []string{"cafe.catalog.read", "cafe.order.read", "cafe.booking.read"}},
-		Migrations: []manifestMigration{{Version: 1, Path: path, SHA256: checksum}},
+		Access:     manifestAccess{Match: "any", Permissions: []string{"cafe.catalog.read", "cafe.order.read", "cafe.booking.read", "cafe.booking.history.read", "cafe.booking.schedule.manage"}},
+		Migrations: manifestMigrations,
 	}
 	data, err := json.Marshal(m)
-	return data, path, err
+	return data, manifestMigrations[0].Path, err
 }
 
 func (m *Manager) Manifest() ([]byte, string, error) {
@@ -277,6 +341,13 @@ func (m *Manager) Migration() (string, []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.migrationPath, append([]byte(nil), m.migrationBytes...)
+}
+
+func (m *Manager) MigrationNamed(name string) ([]byte, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	body, ok := m.migrationFiles[filepath.Base(name)]
+	return append([]byte(nil), body...), ok
 }
 
 func (m *Manager) Phase() string {
@@ -474,8 +545,8 @@ func verifyDatabase(ctx context.Context, db *sql.DB, database persistedDatabase)
 	verifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var currentDB, currentUser string
-	var tables [5]string
-	err := db.QueryRowContext(verifyCtx, `SELECT current_database(), current_user, COALESCE(to_regclass('cafe.cafe_items')::text,''), COALESCE(to_regclass('cafe.cafe_orders')::text,''), COALESCE(to_regclass('cafe.cafe_order_lines')::text,''), COALESCE(to_regclass('cafe.cafe_booths')::text,''), COALESCE(to_regclass('cafe.cafe_bookings')::text,'')`).Scan(&currentDB, &currentUser, &tables[0], &tables[1], &tables[2], &tables[3], &tables[4])
+	var tables [11]string
+	err := db.QueryRowContext(verifyCtx, `SELECT current_database(), current_user, COALESCE(to_regclass('cafe.cafe_items')::text,''), COALESCE(to_regclass('cafe.cafe_orders')::text,''), COALESCE(to_regclass('cafe.cafe_order_lines')::text,''), COALESCE(to_regclass('cafe.cafe_booths')::text,''), COALESCE(to_regclass('cafe.cafe_bookings')::text,''), COALESCE(to_regclass('cafe.cafe_booking_events')::text,''), COALESCE(to_regclass('cafe.cafe_booking_holds')::text,''), COALESCE(to_regclass('cafe.cafe_operating_schedules')::text,''), COALESCE(to_regclass('cafe.cafe_schedule_exceptions')::text,''), COALESCE(to_regclass('cafe.cafe_booth_blackouts')::text,'')`).Scan(&currentDB, &currentUser, &tables[0], &tables[1], &tables[2], &tables[3], &tables[4], &tables[5], &tables[6], &tables[7], &tables[8], &tables[9], &tables[10])
 	if err != nil {
 		return err
 	}
