@@ -84,6 +84,22 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	if _, err := db.ExecContext(ctx, "INSERT INTO cafe.cafe_bookings(id,workspace_id,booth_id,package_id,guest_name,start_at,end_at,package_name,price_vnd,created_by) VALUES($1,$2,$3,$4,'Legacy',$5,$6,'Photo Session',100000,$7)", legacyID, workspace, booth, item, start, start.Add(20*time.Minute), actor); err != nil {
 		t.Fatal(err)
 	}
+	// The staged Café image must continue operating with migration 001.
+	legacyItems, err := store.Items(ctx, workspace)
+	if err != nil || len(legacyItems) != 1 || legacyItems[0].DurationMinutes != 20 {
+		t.Fatalf("legacy menu availability: %+v %v", legacyItems, err)
+	}
+	if _, err := store.CreateItem(ctx, workspace, actor, domain.ItemInput{Name: "Coffee", SKU: "COFFEE-A", Kind: "drink", PriceVND: 35000}); err != nil {
+		t.Fatalf("legacy menu create unavailable: %v", err)
+	}
+	legacyInput := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "Before approval", Start: start.Add(time.Hour), End: start.Add(time.Hour + 20*time.Minute)}
+	if booking, err := store.LegacyReserve(ctx, workspace, actor, legacyInput); err != nil || booking.Status != "confirmed" {
+		t.Fatalf("legacy booking create unavailable: %+v %v", booking, err)
+	}
+	legacyList, err := store.LegacyBookings(ctx, workspace)
+	if err != nil || len(legacyList) < 2 {
+		t.Fatalf("legacy bookings unavailable: %+v %v", legacyList, err)
+	}
 	apply("002_advanced_booking.sql")
 	ready, err = store.AdvancedBookingReady(ctx)
 	if err != nil || !ready {
