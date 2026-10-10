@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	applicationID       = "cafe"
+	applicationID       = "photobooth"
 	contractVersion     = "v1"
 	manifestVersion     = "v1"
 	defaultAppVersion   = "0.2.0"
@@ -160,7 +160,7 @@ func New(config Config) (*Manager, bool, error) {
 		config.PlatformURL = "http://backend:6868"
 	}
 	if config.ServiceURL == "" {
-		config.ServiceURL = "http://cafe:8090"
+		config.ServiceURL = "http://photobooth:8090"
 	}
 
 	if err := os.MkdirAll(config.StateDir, 0700); err != nil {
@@ -309,20 +309,20 @@ func buildManifest(config Config, migrations []publishedMigration) ([]byte, stri
 	m := manifest{
 		ManifestVersion: manifestVersion,
 		Application:     manifestApplication{ID: applicationID, DisplayName: "ApexVoid Photobooth", Description: "Photo-booth booking and venue operations with an optional café counter", Version: config.AppVersion, APIContractVersion: contractVersion},
-		Service:         manifestService{Identity: "cafe-service", HealthPath: "/health", EnrollmentPath: "/.well-known/apexvoid/enroll", FrontendRoute: "/apps/cafe", APIRoute: "/api"},
-		Database:        manifestDatabase{Name: "apexvoid_cafe", Schema: "cafe", Role: "apexvoid_cafe", MigrationBundleVersion: config.MigrationVersion},
+		Service:         manifestService{Identity: "photobooth-service", HealthPath: "/health", EnrollmentPath: "/.well-known/apexvoid/enroll", FrontendRoute: "/apps/photobooth", APIRoute: "/api"},
+		Database:        manifestDatabase{Name: "apexvoid_photobooth", Schema: "photobooth", Role: "apexvoid_photobooth", MigrationBundleVersion: config.MigrationVersion},
 		Permissions: []manifestPermission{
-			{Name: "cafe.catalog.read", DisplayName: "View Café Menu", Description: "View café menu", Scope: "workspace"},
-			{Name: "cafe.catalog.manage", DisplayName: "Manage Café Menu", Description: "Create and update café menu items", Scope: "workspace"},
-			{Name: "cafe.order.read", DisplayName: "View Café Orders", Description: "View café orders", Scope: "workspace"},
-			{Name: "cafe.order.manage", DisplayName: "Manage Café Orders", Description: "Create and fulfill café orders", Scope: "workspace"},
-			{Name: "cafe.booking.read", DisplayName: "View Photo Booth Bookings", Description: "View photo booth bookings", Scope: "workspace"},
-			{Name: "cafe.booking.manage", DisplayName: "Manage Photo Booth Bookings", Description: "Reserve and manage photo booth sessions", Scope: "workspace"},
-			{Name: "cafe.booking.history.read", DisplayName: "View Booking History", Description: "View immutable booking activity history", Scope: "workspace"},
-			{Name: "cafe.booking.schedule.manage", DisplayName: "Manage Booking Schedule", Description: "Configure opening hours and booth blackouts", Scope: "workspace"},
-			{Name: "cafe.booth.manage", DisplayName: "Configure Photo Booths", Description: "Configure photo-booth stations", Scope: "workspace"},
+			{Name: "photobooth.catalog.read", DisplayName: "View Photobooth Menu", Description: "View café menu", Scope: "workspace"},
+			{Name: "photobooth.catalog.manage", DisplayName: "Manage Photobooth Menu", Description: "Create and update café menu items", Scope: "workspace"},
+			{Name: "photobooth.order.read", DisplayName: "View Photobooth Orders", Description: "View café orders", Scope: "workspace"},
+			{Name: "photobooth.order.manage", DisplayName: "Manage Photobooth Orders", Description: "Create and fulfill café orders", Scope: "workspace"},
+			{Name: "photobooth.booking.read", DisplayName: "View Photo Booth Bookings", Description: "View photo booth bookings", Scope: "workspace"},
+			{Name: "photobooth.booking.manage", DisplayName: "Manage Photo Booth Bookings", Description: "Reserve and manage photo booth sessions", Scope: "workspace"},
+			{Name: "photobooth.booking.history.read", DisplayName: "View Booking History", Description: "View immutable booking activity history", Scope: "workspace"},
+			{Name: "photobooth.booking.schedule.manage", DisplayName: "Manage Booking Schedule", Description: "Configure opening hours and booth blackouts", Scope: "workspace"},
+			{Name: "photobooth.booth.manage", DisplayName: "Configure Photo Booths", Description: "Configure photo-booth stations", Scope: "workspace"},
 		},
-		Access:     manifestAccess{Match: "any", Permissions: []string{"cafe.catalog.read", "cafe.order.read", "cafe.booking.read", "cafe.booking.history.read", "cafe.booking.schedule.manage"}},
+		Access:     manifestAccess{Match: "any", Permissions: []string{"photobooth.catalog.read", "photobooth.order.read", "photobooth.booking.read", "photobooth.booking.history.read", "photobooth.booking.schedule.manage"}},
 		Migrations: manifestMigrations,
 	}
 	data, err := json.Marshal(m)
@@ -431,7 +431,7 @@ func (m *Manager) Enroll(ctx context.Context, payload []byte, challenge string) 
 	if credentials.ApplicationID != applicationID || credentials.APIContractVersion != contractVersion || len(challenge) < 32 {
 		return "", errors.New("enrollment identity does not match this application")
 	}
-	if credentials.Database.Name != "apexvoid_cafe" || credentials.Database.Schema != "cafe" || credentials.Database.Role != "apexvoid_cafe" || credentials.Database.MigrationBundleVersion != manifestDatabaseVersion(m.manifestJSON) {
+	if credentials.Database.Name != "apexvoid_photobooth" || credentials.Database.Schema != "photobooth" || credentials.Database.Role != "apexvoid_photobooth" || credentials.Database.MigrationBundleVersion != manifestDatabaseVersion(m.manifestJSON) {
 		return "", errors.New("enrollment database contract does not match the manifest")
 	}
 
@@ -546,7 +546,7 @@ func verifyDatabase(ctx context.Context, db *sql.DB, database persistedDatabase)
 	defer cancel()
 	var currentDB, currentUser string
 	var tables [5]string
-	err := db.QueryRowContext(verifyCtx, `SELECT current_database(), current_user, COALESCE(to_regclass('cafe.cafe_items')::text,''), COALESCE(to_regclass('cafe.cafe_orders')::text,''), COALESCE(to_regclass('cafe.cafe_order_lines')::text,''), COALESCE(to_regclass('cafe.cafe_booths')::text,''), COALESCE(to_regclass('cafe.cafe_bookings')::text,'')`).Scan(&currentDB, &currentUser, &tables[0], &tables[1], &tables[2], &tables[3], &tables[4])
+	err := db.QueryRowContext(verifyCtx, `SELECT current_database(), current_user, COALESCE(to_regclass('photobooth.photobooth_items')::text,''), COALESCE(to_regclass('photobooth.photobooth_orders')::text,''), COALESCE(to_regclass('photobooth.photobooth_order_lines')::text,''), COALESCE(to_regclass('photobooth.photobooth_booths')::text,''), COALESCE(to_regclass('photobooth.photobooth_bookings')::text,'')`).Scan(&currentDB, &currentUser, &tables[0], &tables[1], &tables[2], &tables[3], &tables[4])
 	if err != nil {
 		return err
 	}

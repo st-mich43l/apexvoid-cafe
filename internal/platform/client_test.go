@@ -11,23 +11,23 @@ import (
 
 func TestIntrospectionUsesCredentialAndOperationPermission(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/api/v1/integrations/v1/session/introspect" || r.Header.Get("X-ApexVoid-Application-ID") != "cafe" || r.Header.Get("X-ApexVoid-Service-Credential") != "secret" {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/integrations/v1/session/introspect" || r.Header.Get("X-ApexVoid-Application-ID") != "photobooth" || r.Header.Get("X-ApexVoid-Service-Credential") != "secret" {
 			t.Errorf("unexpected headers or route")
 			w.WriteHeader(401)
 			return
 		}
 		var req map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req["identity_assertion"] != "assertion" || req["permission"] != "cafe.order.read" {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req["identity_assertion"] != "assertion" || req["permission"] != "photobooth.order.read" {
 			t.Errorf("unexpected authorization request %#v %v", req, err)
 		}
-		json.NewEncoder(w).Encode(Decision{UserID: "user", WorkspaceID: "workspace", Permission: "cafe.order.read", Allowed: true})
+		json.NewEncoder(w).Encode(Decision{UserID: "user", WorkspaceID: "workspace", Permission: "photobooth.order.read", Allowed: true})
 	}))
 	defer server.Close()
-	c, err := New(server.URL, "cafe", "secret")
+	c, err := New(server.URL, "photobooth", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := c.Introspect(context.Background(), "assertion", "cafe.order.read")
+	d, err := c.Introspect(context.Background(), "assertion", "photobooth.order.read")
 	if err != nil || !d.Allowed {
 		t.Fatalf("unexpected decision %#v %v", d, err)
 	}
@@ -38,8 +38,8 @@ func TestRefusesRedirect(t *testing.T) {
 	defer target.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 307) }))
 	defer server.Close()
-	c, _ := New(server.URL, "cafe", "topsecret")
-	_, err := c.Introspect(context.Background(), "x", "cafe.order.read")
+	c, _ := New(server.URL, "photobooth", "topsecret")
+	_, err := c.Introspect(context.Background(), "x", "photobooth.order.read")
 	if err == nil || called || strings.Contains(err.Error(), "topsecret") {
 		t.Fatal("credential escaped on redirect")
 	}

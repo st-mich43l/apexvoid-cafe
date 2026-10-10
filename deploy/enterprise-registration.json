@@ -1,22 +1,22 @@
 {
-  "id": "cafe",
+  "id": "photobooth",
   "display_name": "ApexVoid Photobooth",
   "description": "Independent photo-booth booking and venue operations application with an optional café counter",
   "version": "0.1.0",
   "api_contract_version": "v1",
-  "service_identity": "cafe",
-  "service_endpoint": "http://cafe:8090",
-  "health_endpoint": "http://cafe:8090/health",
-  "frontend_route": "/apps/cafe",
+  "service_identity": "photobooth",
+  "service_endpoint": "http://photobooth:8090",
+  "health_endpoint": "http://photobooth:8090/health",
+  "frontend_route": "/apps/photobooth",
   "access_match": "any",
-  "access_permissions": ["cafe.catalog.read", "cafe.order.read", "cafe.booking.read"],
+  "access_permissions": ["photobooth.catalog.read", "photobooth.order.read", "photobooth.booking.read"],
   "permissions": [
-    {"name":"cafe.catalog.read","display_name":"View Café Menu","scope":"workspace"},
-    {"name":"cafe.catalog.manage","display_name":"Manage Café Menu","scope":"workspace"},
-    {"name":"cafe.order.read","display_name":"View Café Orders","scope":"workspace"},
-    {"name":"cafe.order.manage","display_name":"Take and Fulfill Café Orders","scope":"workspace"},
-    {"name":"cafe.booking.read","display_name":"View Photo Booth Bookings","scope":"workspace"},
-    {"name":"cafe.booking.manage","display_name":"Manage Photo Booth Sessions","scope":"workspace"},
-    {"name":"cafe.booth.manage","display_name":"Configure Photo Booths","scope":"workspace"}
+    {"name":"photobooth.catalog.read","display_name":"View Photobooth Menu","scope":"workspace"},
+    {"name":"photobooth.catalog.manage","display_name":"Manage Photobooth Menu","scope":"workspace"},
+    {"name":"photobooth.order.read","display_name":"View Photobooth Orders","scope":"workspace"},
+    {"name":"photobooth.order.manage","display_name":"Take and Fulfill Photobooth Orders","scope":"workspace"},
+    {"name":"photobooth.booking.read","display_name":"View Photo Booth Bookings","scope":"workspace"},
+    {"name":"photobooth.booking.manage","display_name":"Manage Photo Booth Sessions","scope":"workspace"},
+    {"name":"photobooth.booth.manage","display_name":"Configure Photo Booths","scope":"workspace"}
   ]
 }

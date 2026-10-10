@@ -85,7 +85,7 @@ func TestNoBypassOfGatewayAndPermission(t *testing.T) {
 	if got := call("GET", "/v1/menu", "real").Code; got != 200 {
 		t.Fatalf("allowed call %d", got)
 	}
-	if len(auth.calls) != 1 || auth.calls[0] != "cafe.catalog.read" || store.workspace != workspaceID {
+	if len(auth.calls) != 1 || auth.calls[0] != "photobooth.catalog.read" || store.workspace != workspaceID {
 		t.Fatal("operation or tenant not bound to introspection")
 	}
 	auth.allowed = false
@@ -113,7 +113,7 @@ func TestContextUsesEnterpriseManagedDisplayName(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body.ApplicationID != "cafe" || body.DisplayName != "HUI moment" {
+	if body.ApplicationID != "photobooth" || body.DisplayName != "HUI moment" {
 		t.Fatalf("unexpected context: %+v", body)
 	}
 }

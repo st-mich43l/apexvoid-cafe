@@ -249,14 +249,14 @@ func (s *Server) guard(permission string, next func(http.ResponseWriter, *http.R
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	mux.HandleFunc("GET /v1/context", s.guard("cafe.catalog.read", func(w http.ResponseWriter, r *http.Request, _ platform.Decision) {
+	mux.HandleFunc("GET /v1/context", s.guard("photobooth.catalog.read", func(w http.ResponseWriter, r *http.Request, _ platform.Decision) {
 		displayName := strings.TrimSpace(r.Header.Get(platform.ApplicationDisplayNameHeader))
 		if displayName == "" {
 			displayName = "ApexVoid Photobooth"
 		}
-		write(w, http.StatusOK, map[string]string{"application_id": "cafe", "display_name": displayName})
+		write(w, http.StatusOK, map[string]string{"application_id": "photobooth", "display_name": displayName})
 	}))
-	mux.HandleFunc("GET /v1/menu", s.guard("cafe.catalog.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/menu", s.guard("photobooth.catalog.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		items, err := s.currentStore().Items(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
@@ -264,7 +264,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("POST /v1/menu", s.guard("cafe.catalog.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/menu", s.guard("photobooth.catalog.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		var in domain.ItemInput
 		if !decode(w, r, &in) {
 			return
@@ -276,7 +276,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 201, item)
 	}))
-	mux.HandleFunc("GET /v1/booths", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/booths", s.guard("photobooth.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		items, err := s.currentStore().Booths(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
@@ -284,7 +284,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("POST /v1/booths", s.guard("cafe.booth.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/booths", s.guard("photobooth.booth.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		var in struct {
 			Name string `json:"name"`
 		}
@@ -298,7 +298,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 201, item)
 	}))
-	mux.HandleFunc("GET /v1/orders", s.guard("cafe.order.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/orders", s.guard("photobooth.order.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		items, err := s.currentStore().Orders(r.Context(), d.WorkspaceID)
 		if err != nil {
 			domainFailure(w, err)
@@ -306,7 +306,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("POST /v1/orders", s.guard("cafe.order.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/orders", s.guard("photobooth.order.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		var in domain.OrderInput
 		if !decode(w, r, &in) {
 			return
@@ -320,7 +320,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	for _, action := range []string{"serve", "cancel"} {
 		a := action
-		mux.HandleFunc("POST /v1/orders/{id}/"+a, s.guard("cafe.order.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		mux.HandleFunc("POST /v1/orders/{id}/"+a, s.guard("photobooth.order.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 			item, err := s.currentStore().TransitionOrder(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
 			if err != nil {
 				domainFailure(w, err)
@@ -329,7 +329,7 @@ func (s *Server) Handler() http.Handler {
 			write(w, 200, item)
 		}))
 	}
-	mux.HandleFunc("GET /v1/bookings", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/bookings", s.guard("photobooth.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		if legacy, ok := s.legacyBookingsPending(r.Context()); ok {
 			items, err := legacy.LegacyBookings(r.Context(), d.WorkspaceID)
 			if err != nil {
@@ -355,7 +355,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("POST /v1/bookings", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/bookings", s.guard("photobooth.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		if legacy, ok := s.legacyBookingsPending(r.Context()); ok {
 			var in domain.BookingInput
 			if !decode(w, r, &in) {
@@ -384,7 +384,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 201, item)
 	}))
-	mux.HandleFunc("GET /v1/bookings/{id}", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/bookings/{id}", s.guard("photobooth.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -396,7 +396,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, item)
 	}))
-	mux.HandleFunc("GET /v1/bookings/{id}/events", s.guard("cafe.booking.history.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/bookings/{id}/events", s.guard("photobooth.booking.history.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -408,7 +408,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("GET /v1/bookings/availability", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/bookings/availability", s.guard("photobooth.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -425,7 +425,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, map[string]any{"slots": slots})
 	}))
-	mux.HandleFunc("POST /v1/bookings/{id}/reschedule", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/bookings/{id}/reschedule", s.guard("photobooth.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -443,7 +443,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	for _, action := range []string{"check-in", "start", "complete", "cancel", "no-show"} {
 		a := action
-		mux.HandleFunc("POST /v1/bookings/{id}/"+a, s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+		mux.HandleFunc("POST /v1/bookings/{id}/"+a, s.guard("photobooth.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 			if legacy, ok := s.legacyBookingsPending(r.Context()); ok && (a == "check-in" || a == "complete" || a == "cancel") {
 				item, err := legacy.LegacyTransition(r.Context(), d.WorkspaceID, r.PathValue("id"), a)
 				if err != nil {
@@ -471,7 +471,7 @@ func (s *Server) Handler() http.Handler {
 			write(w, 200, item)
 		}))
 	}
-	mux.HandleFunc("POST /v1/booking-holds", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/booking-holds", s.guard("photobooth.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -487,7 +487,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 201, hold)
 	}))
-	mux.HandleFunc("DELETE /v1/booking-holds/{id}", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("DELETE /v1/booking-holds/{id}", s.guard("photobooth.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -499,7 +499,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, hold)
 	}))
-	mux.HandleFunc("POST /v1/booking-holds/{id}/confirm", s.guard("cafe.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/booking-holds/{id}/confirm", s.guard("photobooth.booking.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -515,7 +515,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 201, booking)
 	}))
-	mux.HandleFunc("GET /v1/schedules", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/schedules", s.guard("photobooth.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -527,7 +527,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("PUT /v1/schedules/{weekday}", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("PUT /v1/schedules/{weekday}", s.guard("photobooth.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -545,7 +545,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, item)
 	}))
-	mux.HandleFunc("GET /v1/blackouts", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/blackouts", s.guard("photobooth.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -557,7 +557,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 200, items)
 	}))
-	mux.HandleFunc("POST /v1/blackouts", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("POST /v1/blackouts", s.guard("photobooth.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -573,7 +573,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		write(w, 201, item)
 	}))
-	mux.HandleFunc("DELETE /v1/blackouts/{id}", s.guard("cafe.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("DELETE /v1/blackouts/{id}", s.guard("photobooth.booking.schedule.manage", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return
@@ -584,7 +584,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	mux.HandleFunc("GET /v1/booths/utilization", s.guard("cafe.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
+	mux.HandleFunc("GET /v1/booths/utilization", s.guard("photobooth.booking.read", func(w http.ResponseWriter, r *http.Request, d platform.Decision) {
 		advanced, ok := requireAdvanced(w, r, s)
 		if !ok {
 			return

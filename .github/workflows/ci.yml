@@ -14,7 +14,7 @@ jobs:
       - run: test -z "$(gofmt -l cmd internal)"
       - run: go vet ./...
       - run: go test ./...
-      - run: go build ./cmd/cafe
+      - run: go build ./cmd/photobooth
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -35,18 +35,18 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: apexvoid_cafe_test
+          POSTGRES_DB: apexvoid_photobooth_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d apexvoid_cafe_test"
+          --health-cmd "pg_isready -U postgres -d apexvoid_photobooth_test"
           --health-interval 3s
           --health-timeout 3s
           --health-retries 20
     env:
-      APEXVOID_CAFE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/apexvoid_cafe_test?sslmode=disable&search_path=cafe&default_query_exec_mode=simple_protocol
+      APEXVOID_PHOTOBOOTH_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/apexvoid_photobooth_test?sslmode=disable&search_path=photobooth&default_query_exec_mode=simple_protocol
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
