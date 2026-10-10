@@ -10,10 +10,12 @@ WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
-RUN go mod tidy && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /photobooth ./cmd/photobooth
+RUN go mod tidy && CGO_ENABLED=0 go build -tags timetzdata -trimpath -ldflags="-s -w" -o /photobooth ./cmd/photobooth
 
 FROM alpine:3.21
-RUN apk --no-cache add ca-certificates && adduser -D -u 10001 photobooth
+RUN apk --no-cache add ca-certificates tzdata && \
+    test -s /usr/share/zoneinfo/Asia/Ho_Chi_Minh && \
+    adduser -D -u 10001 photobooth
 WORKDIR /app
 RUN mkdir -p /var/lib/apexvoid/bootstrap && chown -R photobooth:photobooth /var/lib/apexvoid
 COPY --from=backend /photobooth /app/photobooth
