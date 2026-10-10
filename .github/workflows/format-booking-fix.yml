@@ -1,0 +1,24 @@
+name: Format booking timezone hotfix
+on:
+  push:
+    branches:
+      - fix/booking-availability-timezone-runtime
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Format touched Go files
+        run: |
+          gofmt -w internal/domain/models.go internal/storage/store.go internal/service/server.go internal/service/server_test.go tests/integration/booking_test.go
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add internal/domain/models.go internal/storage/store.go internal/service/server.go internal/service/server_test.go tests/integration/booking_test.go
+            git commit -m "style(booking): gofmt timezone hotfix"
+            git push origin HEAD:fix/booking-availability-timezone-runtime
+          fi
