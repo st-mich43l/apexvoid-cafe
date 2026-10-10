@@ -572,11 +572,15 @@ func (s *Store) CreateHold(ctx context.Context, workspace, actor string, input d
 	if err = packageDuration(ctx, tx, workspace, input.PackageID, input.Start, input.End); err != nil {
 		return domain.Hold{}, err
 	}
-	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End, input.BufferBefore, input.BufferAfter); err != nil {
+	buffers := domain.BookingInput{BoothID: input.BoothID, PackageID: input.PackageID, Start: input.Start, End: input.End}
+	if err = applyScheduleBuffers(ctx, tx, workspace, input.BoothID, input.Start, &buffers); err != nil {
+		return domain.Hold{}, err
+	}
+	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End, buffers.BufferBefore, buffers.BufferAfter); err != nil {
 		return domain.Hold{}, err
 	}
 	var h domain.Hold
-	err = tx.QueryRowContext(ctx, `INSERT INTO cafe_booking_holds(workspace_id,booth_id,package_id,start_at,end_at,expires_at,created_by) VALUES($1,$2,$3,$4,$5,now()+make_interval(secs=>$6),$7) RETURNING id::text,booth_id::text,package_id::text,start_at,end_at,expires_at,status,created_at`, workspace, input.BoothID, input.PackageID, input.Start, input.End, input.TTLSeconds, actor).Scan(&h.ID, &h.BoothID, &h.PackageID, &h.Start, &h.End, &h.ExpiresAt, &h.Status, &h.CreatedAt)
+	err = tx.QueryRowContext(ctx, `INSERT INTO cafe_booking_holds(workspace_id,booth_id,package_id,start_at,end_at,expires_at,created_by,buffer_before_minutes,buffer_after_minutes) VALUES($1,$2,$3,$4,$5,now()+make_interval(secs=>$6),$7,$8,$9) RETURNING id::text,booth_id::text,package_id::text,start_at,end_at,expires_at,status,created_at`, workspace, input.BoothID, input.PackageID, input.Start, input.End, input.TTLSeconds, actor, buffers.BufferBefore, buffers.BufferAfter).Scan(&h.ID, &h.BoothID, &h.PackageID, &h.Start, &h.End, &h.ExpiresAt, &h.Status, &h.CreatedAt)
 	if err != nil {
 		return domain.Hold{}, MapError(err)
 	}
@@ -602,16 +606,29 @@ func (s *Store) ConfirmHold(ctx context.Context, workspace, actor, id string, in
 	}
 	defer tx.Rollback()
 	var h domain.Hold
-	err = tx.QueryRowContext(ctx, `SELECT id::text,booth_id::text,package_id::text,start_at,end_at,expires_at,status,coalesce(confirmed_booking_id::text,'') FROM cafe_booking_holds WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, workspace, id).Scan(&h.ID, &h.BoothID, &h.PackageID, &h.Start, &h.End, &h.ExpiresAt, &h.Status, &input.IdempotencyKey)
+	var confirmedID string
+	var before, after int
+	// Acquire the booth advisory lock before the hold row lock. Booking/hold
+	// triggers use this same order, preventing cross-transaction deadlocks.
+	var boothID string
+	if err = tx.QueryRowContext(ctx, `SELECT booth_id::text FROM cafe_booking_holds WHERE workspace_id=$1 AND id=$2`, workspace, id).Scan(&boothID); errors.Is(err, sql.ErrNoRows) {
+		return domain.Booking{}, domain.ErrNotFound
+	} else if err != nil {
+		return domain.Booking{}, MapError(err)
+	}
+	if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 72840021))`, boothID); err != nil {
+		return domain.Booking{}, MapError(err)
+	}
+	err = tx.QueryRowContext(ctx, `SELECT id::text,booth_id::text,package_id::text,start_at,end_at,expires_at,status,coalesce(confirmed_booking_id::text,''),buffer_before_minutes,buffer_after_minutes FROM cafe_booking_holds WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, workspace, id).Scan(&h.ID, &h.BoothID, &h.PackageID, &h.Start, &h.End, &h.ExpiresAt, &h.Status, &confirmedID, &before, &after)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Booking{}, domain.ErrNotFound
 	}
 	if err != nil {
 		return domain.Booking{}, MapError(err)
 	}
-	if h.Status == "confirmed" && domain.ValidID(input.IdempotencyKey) {
+	if h.Status == "confirmed" && domain.ValidID(confirmedID) {
 		_ = tx.Rollback()
-		return s.GetBooking(ctx, workspace, input.IdempotencyKey)
+		return s.GetBooking(ctx, workspace, confirmedID)
 	}
 	if h.Status != "active" || !h.ExpiresAt.After(time.Now()) {
 		return domain.Booking{}, domain.ErrConflict
@@ -621,13 +638,19 @@ func (s *Store) ConfirmHold(ctx context.Context, workspace, actor, id string, in
 	if err != nil {
 		return domain.Booking{}, err
 	}
+	if err = packageDuration(ctx, tx, workspace, input.PackageID, input.Start, input.End); err != nil {
+		return domain.Booking{}, err
+	}
+	if err = s.slotAllowed(ctx, tx, workspace, input.BoothID, input.Start, input.End, before, after); err != nil {
+		return domain.Booking{}, err
+	}
 	// Release the hold inside the same transaction before inserting the booking.
 	// The overlap trigger must not see the hold being converted as a conflict.
 	if _, err = tx.ExecContext(ctx, `UPDATE cafe_booking_holds SET status='confirmed',released_at=now() WHERE workspace_id=$1 AND id=$2`, workspace, id); err != nil {
 		return domain.Booking{}, MapError(err)
 	}
 	var bookingID string
-	err = tx.QueryRowContext(ctx, `INSERT INTO cafe_bookings(workspace_id,booth_id,package_id,guest_name,guest_phone,guest_email,party_size,notes,addons,start_at,end_at,package_name,price_vnd,created_by,updated_by) SELECT $1,booth.id,item.id,$4,$5,$6,$7,$8,$9,$10,$11,item.name,item.price_vnd,$12,$12 FROM cafe_booths booth JOIN cafe_items item ON item.id=$3 AND item.workspace_id=$1 WHERE booth.id=$2 AND booth.workspace_id=$1 AND booth.active AND item.active AND item.kind='photo' RETURNING id::text`, workspace, input.BoothID, input.PackageID, input.GuestName, input.GuestPhone, input.GuestEmail, input.PartySize, input.Notes, jsonOrEmpty(input.Addons), input.Start, input.End, actor).Scan(&bookingID)
+	err = tx.QueryRowContext(ctx, `INSERT INTO cafe_bookings(workspace_id,booth_id,package_id,guest_name,guest_phone,guest_email,party_size,notes,addons,start_at,end_at,package_name,price_vnd,created_by,updated_by,buffer_before_minutes,buffer_after_minutes) SELECT $1,booth.id,item.id,$4,$5,$6,$7,$8,$9,$10,$11,item.name,item.price_vnd,$12,$12,$13,$14 FROM cafe_booths booth JOIN cafe_items item ON item.id=$3 AND item.workspace_id=$1 WHERE booth.id=$2 AND booth.workspace_id=$1 AND booth.active AND item.active AND item.kind='photo' RETURNING id::text`, workspace, input.BoothID, input.PackageID, input.GuestName, input.GuestPhone, input.GuestEmail, input.PartySize, input.Notes, jsonOrEmpty(input.Addons), input.Start, input.End, actor, before, after).Scan(&bookingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Booking{}, domain.ErrInvalid
 	}
