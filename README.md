@@ -103,3 +103,28 @@ The Go image build downloads `pgx/v5` and the public Enterprise integration SDK;
 ## Business model notes
 
 This is a **staff-operated proof of concept** for combining a café and self-photo booths. Photo packages are scheduled experiences; café drinks are repeat purchases; future cross-sells include drink+photo combos, premium frames, reprints and group bookings. Validate utilization, staffing, booth turnover, drink margins and equipment depreciation before treating the concept as profitable. Photo images are not stored, and only a guest name is stored for a booking. Before public operation define personal-data retention and privacy notices, and check Vietnam's current rules for invoicing, customer data and business licensing.
+
+## Phase 1 Enterprise application lifecycle compatibility
+
+Café now supports the Enterprise **reviewed application upgrade** manifest
+challenge. An enrolled Café service answers
+\`GET /.well-known/apexvoid/manifest.json\` with the exact JSON manifest and
+\`X-ApexVoid-Update-Signature\` only when Enterprise supplies a fresh
+\`X-ApexVoid-Update-Challenge\` header. Signature input is the existing
+enrollment-persisted permanent service credential (SHA-256-derived HMAC key),
+the domain-separated update context, the challenge and the raw manifest bytes.
+No permanent credential, enrollment code or database secret is sent over HTTP.
+The old signed enrollment response remains available for initial registration.
+
+The Enterprise application gateway now uses full-page /apps/cafe/ navigation,
+not an iframe. A selected workspace is passed on the initial app launch and
+resolved against the current user's membership. Café includes that selection
+in its API headers, so orders and bookings remain bound to the same workspace.
+
+To introduce a later Café schema or permission upgrade: append a **new**
+numbered SQL migration, increment the stable application version and, when SQL
+changes, its migration bundle version. Keep all previously published migration
+versions, paths and checksums identical, and do not change application database
+ownership. Enterprise must explicitly approve the signed plan and its new
+permissions/migrations. Keep newly deployed code backward-compatible with the
+existing schema until approval finishes. POS integration is not in scope.
