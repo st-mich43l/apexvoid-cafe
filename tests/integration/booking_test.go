@@ -105,6 +105,27 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	if err != nil || !ready {
 		t.Fatalf("Phase 2 failed to activate after approved schema: ready=%v err=%v", ready, err)
 	}
+	// Regression: availability for a 60-minute photo package must work with
+	// Asia/Ho_Chi_Minh (the configured venue timezone), not reject valid IDs
+	// and a valid future date with a generic 400 validation error.
+	weddingID := uuid(t)
+	if _, err := db.ExecContext(ctx, `INSERT INTO photobooth.photobooth_items(id,workspace_id,sku,name,kind,price_vnd,duration_minutes,created_by)
+	VALUES($1,$2,'WEDDING-60','Wedding','photo',300000,60,$3)`, weddingID, workspace, actor); err != nil {
+		t.Fatal(err)
+	}
+	availableDay := start.AddDate(0, 0, 1)
+	openSlots, err := store.Availability(ctx, workspace, domain.AvailabilityQuery{
+		BoothID: booth, PackageID: weddingID, Date: availableDay,
+	})
+	if err != nil || len(openSlots) == 0 {
+		t.Fatalf("valid 60-minute Wedding package returned unavailable/error: slots=%d err=%v", len(openSlots), err)
+	}
+	for _, slot := range openSlots {
+		if slot.End.Sub(slot.Start) != time.Hour {
+			t.Fatalf("60-minute package exposed incorrect slot duration: %+v", slot)
+		}
+	}
+
 	var ref, status string
 	if err := db.QueryRowContext(ctx, "SELECT booking_ref,status FROM photobooth.photobooth_bookings WHERE id=$1", legacyID).Scan(&ref, &status); err != nil {
 		t.Fatal(err)
