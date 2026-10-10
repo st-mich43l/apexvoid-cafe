@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -140,5 +141,25 @@ func TestBusinessRoutesStayUnavailableBeforeEnrollment(t *testing.T) {
 	app.Handler().ServeHTTP(res, httptest.NewRequest("GET", "/v1/menu", nil))
 	if res.Code != 503 {
 		t.Fatalf("pre-enrollment business route returned %d", res.Code)
+	}
+}
+
+func TestMissingServerTimezoneIsNotMisreportedAsInvalidBooking(t *testing.T) {
+	w := httptest.NewRecorder()
+	domainFailure(w, domain.ErrTimezoneUnavailable)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("timezone failure returned %d; want 503", w.Code)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "TIMEZONE_UNAVAILABLE" || body.Error.Message == "" {
+		t.Fatalf("timezone failure must be actionable: %+v", body.Error)
 	}
 }
