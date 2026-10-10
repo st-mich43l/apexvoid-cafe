@@ -12,7 +12,7 @@ import (
 
 func TestManifestUpdateRequiresEnrolledCredentialAndFreshChallenge(t *testing.T) {
 	m := &Manager{
-		state: persistedState{Phase: "ACTIVE", SetupCode: strings.Repeat("c", 40), ServiceCredential: strings.Repeat("s", 64)},
+		state:        persistedState{Phase: "ACTIVE", SetupCode: strings.Repeat("c", 40), ServiceCredential: strings.Repeat("s", 64)},
 		manifestJSON: []byte("{\"manifest_version\":\"v1\"}"),
 	}
 	challenge := strings.Repeat("n", 40)
