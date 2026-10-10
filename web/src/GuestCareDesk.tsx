@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CalendarClock, ChevronLeft, ChevronRight, Clock3, Phone, Search, ShieldCheck, UserRound, X } from 'lucide-react'
 import type { Booking, Page } from './App'
 
 type CareDeskProps = {
-  calendarBookings: Booking[]
+  loadTodayBookings: () => Promise<Booking[]>
+  refreshKey: number
   searchBookings: (query: string, status: string, page: number) => Promise<Page<Booking>>
   onOpenBooking: (booking: Booking) => void
   onOpenCalendar: () => void
@@ -61,16 +62,31 @@ function GuestRecord({ booking, onOpen }: { booking: Booking; onOpen: (value: Bo
   </article>
 }
 
-export function GuestCareDesk({ calendarBookings, searchBookings, onOpenBooking, onOpenCalendar }: CareDeskProps) {
+export function GuestCareDesk({ loadTodayBookings, refreshKey, searchBookings, onOpenBooking, onOpenCalendar }: CareDeskProps) {
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
   const [results, setResults] = useState<Page<Booking> | null>(null)
+  const [todayBookings, setTodayBookings] = useState<Booking[]>([])
+  const [queueError, setQueueError] = useState<string | null>(null)
+  const [queueLoading, setQueueLoading] = useState(true)
+  const [retryCount, setRetryCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const query = debouncedSearch.trim()
   const searching = query.length >= 2
+
+  useEffect(() => {
+    let active = true
+    setQueueLoading(true)
+    setQueueError(null)
+    void loadTodayBookings()
+      .then(items => { if (active) setTodayBookings(items) })
+      .catch(cause => { if (active) setQueueError(cause instanceof Error ? cause.message : 'Unable to load arrivals.') })
+      .finally(() => { if (active) setQueueLoading(false) })
+    return () => { active = false }
+  }, [loadTodayBookings, refreshKey])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(search), 350)
@@ -93,12 +109,9 @@ export function GuestCareDesk({ calendarBookings, searchBookings, onOpenBooking,
       .catch(cause => { if (current) setError(cause instanceof Error ? cause.message : 'Could not find bookings.') })
       .finally(() => { if (current) setLoading(false) })
     return () => { current = false }
-  }, [query, status, page, searching, searchBookings])
+  }, [query, status, page, searching, searchBookings, retryCount])
 
-  const today = vietnamDateKey(new Date())
-  const todaysBookings = useMemo(() => calendarBookings
-    .filter(item => vietnamDateKey(item.start) === today)
-    .sort((a, b) => a.start.localeCompare(b.start)), [calendarBookings, today])
+  const todaysBookings = todayBookings.slice().sort((a, b) => a.start.localeCompare(b.start))
   const toCareFor = todaysBookings.filter(item => ['confirmed', 'checked_in', 'in_progress'].includes(item.status))
   const awaiting = todaysBookings.filter(item => item.status === 'confirmed').length
   const checkedIn = todaysBookings.filter(item => item.status === 'checked_in').length
@@ -150,10 +163,12 @@ export function GuestCareDesk({ calendarBookings, searchBookings, onOpenBooking,
 
       {search.trim().length === 1 && <p className="care-hint" role="status">Enter at least two characters to search reservation history.</p>}
       {(loading || pendingSearch) && searching && <p className="care-hint" role="status">Searching bookings…</p>}
-      {error && <div className="care-error" role="alert">{error}<button type="button" onClick={() => { setPage(1); setDebouncedSearch(search.trim()) }}>Try again</button></div>}
+      {queueLoading && !searching && <p className="care-hint" role="status">Loading today's guest arrivals…</p>}
+      {queueError && !searching && <div className="care-error" role="alert">{queueError}</div>}
+      {error && <div className="care-error" role="alert">{error}<button type="button" onClick={() => setRetryCount(value => value + 1)}>Try again</button></div>}
       <div className="care-record-list">
-        {!loading && !pendingSearch && !error && records.map(item => <GuestRecord key={item.id} booking={item} onOpen={onOpenBooking} />)}
-        {!loading && !pendingSearch && !error && records.length === 0 && <div className="care-empty"><UserRound size={25} /><h4>{searching ? 'No matching reservations' : 'No guests in the queue'}</h4><p>{searching ? 'Check the guest name, phone, or booking reference.' : 'Confirmed arrivals will appear here on their session date.'}</p></div>}
+        {!(loading || pendingSearch || (!searching && queueLoading)) && !error && !queueError && records.map(item => <GuestRecord key={item.id} booking={item} onOpen={onOpenBooking} />)}
+        {!(loading || pendingSearch || (!searching && queueLoading)) && !error && !queueError && records.length === 0 && <div className="care-empty"><UserRound size={25} /><h4>{searching ? 'No matching reservations' : 'No guests in the queue'}</h4><p>{searching ? 'Check the guest name, phone, or booking reference.' : 'Confirmed arrivals will appear here on their session date.'}</p></div>}
       </div>
       {searching && results && !loading && !pendingSearch && <div className="care-pagination" aria-label="Guest search pages">
         <button type="button" disabled={page <= 1} onClick={() => setPage(n => Math.max(1, n - 1))}><ChevronLeft size={15} />Previous</button>
