@@ -8,9 +8,10 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("invalid input")
-	ErrConflict = errors.New("resource conflict")
-	ErrNotFound = errors.New("resource not found")
+	ErrInvalid             = errors.New("invalid input")
+	ErrConflict            = errors.New("resource conflict")
+	ErrNotFound            = errors.New("resource not found")
+	ErrTimezoneUnavailable = errors.New("timezone database is unavailable")
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)

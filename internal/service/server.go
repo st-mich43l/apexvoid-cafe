@@ -190,6 +190,11 @@ func domainFailure(w http.ResponseWriter, err error) {
 		failure(w, 409, "CONFLICT")
 	case errors.Is(err, domain.ErrNotFound):
 		failure(w, 404, "NOT_FOUND")
+	case errors.Is(err, domain.ErrTimezoneUnavailable):
+		write(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]string{
+			"code":    "TIMEZONE_UNAVAILABLE",
+			"message": "Booking timezone data is unavailable on the server. Please contact an administrator.",
+		}})
 	default:
 		failure(w, 500, "INTERNAL_ERROR")
 	}
