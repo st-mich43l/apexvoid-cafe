@@ -114,13 +114,13 @@ go test ./internal/domain ./internal/platform ./internal/service
 
 The Go image build downloads `pgx/v5` and the public Enterprise integration SDK; the frontend image build downloads npm dependencies. Enterprise owns the migration ledger and applies versions 1 and 2 in order in a transaction guarded by an advisory lock. The Café publishes every immutable SQL artifact under `/.well-known/apexvoid/migrations/` and only verifies the expected database identity/schema after the approved upgrade is applied. Any future schema changes should use a new migration version, not edit an applied SQL file. Existing legacy `cafe-db-data` volumes are not removed automatically; back them up and migrate deliberately before deleting them.
 
-For a staged Phase 2 release, deploy the new Café image first. It remains HTTP-available but reports `APPLICATION_NOT_READY` for business routes until Enterprise approves and applies `002_advanced_booking.sql`; the new container does not create a second database or run migrations itself. After approval, the enrollment verifier sees the Phase 2 tables and activates the service.
+For a staged Phase 2 release, deploy the new Café image first. The original schema remains sufficient for service activation. The existing menu, counter, booth and legacy reservation endpoints stay operational through a Phase 1-compatible storage path; new scheduling, holds, availability and advanced booking operations return `SCHEMA_UPGRADE_REQUIRED` until Enterprise approves and applies `002_advanced_booking.sql`. The new calendar/form UI depends on advanced availability, so arrange prompt approval or retain access to the previous booking UI during the rollout window. The container never creates another database or self-applies migrations. Once approved, the same running service begins serving Phase 2 operations.
 
 **Do not publish port 8090 directly** while using the Enterprise assertion-based trust model. There is no stand-alone login for direct access; the Enterprise gateway is required.
 
 ## Business model notes
 
-This is a **staff-operated proof of concept** for combining a café and self-photo booths. Photo packages are scheduled experiences; café drinks are repeat purchases; future cross-sells include drink+photo combos, premium frames, reprints and group bookings. Validate utilization, staffing, booth turnover, drink margins and equipment depreciation before treating the concept as profitable. Photo images are not stored, and only a guest name is stored for a booking. Before public operation define personal-data retention and privacy notices, and check Vietnam's current rules for invoicing, customer data and business licensing.
+This is a **staff-operated proof of concept** for combining a café and self-photo booths. Photo packages are scheduled experiences; café drinks are repeat purchases; future cross-sells include drink+photo combos, premium frames, reprints and group bookings. Validate utilization, staffing, booth turnover, drink margins and equipment depreciation before treating the concept as profitable. Photo images are not stored; booking records can include guest names, optional phone/email, party size and staff notes. Before public operation define personal-data retention and privacy notices, and check Vietnam's current rules for invoicing, customer data and business licensing.
 
 ## Phase 1 Enterprise application lifecycle compatibility
 
@@ -146,3 +146,9 @@ versions, paths and checksums identical, and do not change application database
 ownership. Enterprise must explicitly approve the signed plan and its new
 permissions/migrations. Keep newly deployed code backward-compatible with the
 existing schema until approval finishes. POS integration is not in scope.
+
+### Phase 2 database verification
+
+GitHub CI now runs `go test -tags=integration ./tests/integration` against a disposable PostgreSQL 16 database. The test applies the original and new migrations in order, checks historical booking backfills and generated references, verifies legacy read/write behavior while approval is pending, and exercises concurrent bookings, hold buffers, idempotent confirmation and rescheduling rollback.
+
+A separate Enterprise fix is required before applying migration 002: the Enterprise migration safety filter must accept ordinary `UPDATE ... SET` data backfills without allowing privilege/session changes. Apply Enterprise PR #40 (or its merged equivalent) before approving this Café schema upgrade. The migration bundle version is `0.2.0` (semantic version), while SQL migration numbers are the integers 1 and 2.
