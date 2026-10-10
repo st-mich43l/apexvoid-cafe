@@ -99,14 +99,14 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	// A generated reference and the upgraded status default must be present
 	// even though application INSERT statements omit those two columns.
 	future := start.Add(90 * time.Minute)
-	input := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "First", PartySize: 2, Start: future, End: future.Add(20*time.Minute)}
+	input := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "First", PartySize: 2, Start: future, End: future.Add(20 * time.Minute)}
 	created, err := store.CreateBooking(ctx, workspace, actor, input)
 	if err != nil || !strings.HasPrefix(created.BookingRef, "CAF-") || created.Status != "confirmed" {
 		t.Fatalf("new booking: %+v %v", created, err)
 	}
 	// Concurrent writers must serialize at the database trigger, not just
 	// rely on an application-level availability preview.
-	concurrent := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "Race", PartySize: 1, Start: future.Add(90*time.Minute), End: future.Add(110*time.Minute)}
+	concurrent := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "Race", PartySize: 1, Start: future.Add(90 * time.Minute), End: future.Add(110 * time.Minute)}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {
@@ -137,11 +137,11 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	holdStart := start.Add(4 * time.Hour)
-	hold, err := store.CreateHold(ctx, workspace, actor, domain.HoldInput{BoothID: booth, PackageID: item, Start: holdStart, End: holdStart.Add(20*time.Minute), TTLSeconds: 600})
+	hold, err := store.CreateHold(ctx, workspace, actor, domain.HoldInput{BoothID: booth, PackageID: item, Start: holdStart, End: holdStart.Add(20 * time.Minute), TTLSeconds: 600})
 	if err != nil {
 		t.Fatalf("buffered hold: %v", err)
 	}
-	adjacent := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "Too close", Start: holdStart.Add(20*time.Minute), End: holdStart.Add(40*time.Minute)}
+	adjacent := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "Too close", Start: holdStart.Add(20 * time.Minute), End: holdStart.Add(40 * time.Minute)}
 	if _, err := store.CreateBooking(ctx, workspace, actor, adjacent); err != domain.ErrConflict {
 		t.Fatalf("adjacent reservation bypassed hold buffers: %v", err)
 	}
