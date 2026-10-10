@@ -189,6 +189,9 @@ func (f BookingFilter) Normalize() (BookingFilter, error) {
 		f.PageSize = 200
 	}
 	f.Guest = strings.TrimSpace(f.Guest)
+	if len([]rune(f.Guest)) > 120 {
+		return BookingFilter{}, ErrInvalid
+	}
 	if f.BoothID != "" && !ValidID(f.BoothID) {
 		return BookingFilter{}, ErrInvalid
 	}
