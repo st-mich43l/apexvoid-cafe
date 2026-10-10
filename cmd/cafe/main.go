@@ -22,7 +22,7 @@ func main() {
 		MigrationPath:    os.Getenv("SCHEMA_PATH"),
 		MigrationDir:     env("SCHEMA_DIR", "db/migrations"),
 		AppVersion:       env("APEXVOID_APP_VERSION", "0.2.0"),
-		MigrationVersion: env("APEXVOID_MIGRATION_BUNDLE_VERSION", "2"),
+		MigrationVersion: env("APEXVOID_MIGRATION_BUNDLE_VERSION", "0.2.0"),
 		DatabaseHost:     env("DATABASE_HOST", "postgres"),
 		DatabasePort:     envInt("DATABASE_PORT", 5432),
 		DatabaseSSLMode:  env("DATABASE_SSLMODE", "disable"),
