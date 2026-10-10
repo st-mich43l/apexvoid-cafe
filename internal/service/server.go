@@ -103,7 +103,9 @@ func requireAdvanced(w http.ResponseWriter, r *http.Request, s *Server) (Advance
 		failure(w, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED")
 		return nil, false
 	}
-	if checker, supported := advanced.(interface{ AdvancedBookingReady(context.Context) (bool, error) }); supported {
+	if checker, supported := advanced.(interface {
+		AdvancedBookingReady(context.Context) (bool, error)
+	}); supported {
 		ready, err := checker.AdvancedBookingReady(r.Context())
 		if err != nil || !ready {
 			failure(w, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED")

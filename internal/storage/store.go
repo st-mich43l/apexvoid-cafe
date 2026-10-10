@@ -777,7 +777,7 @@ func (s *Store) Availability(ctx context.Context, workspace string, q domain.Ava
 	minimum := time.Now().Add(time.Duration(minAdvance) * time.Minute)
 	maximum := time.Now().In(loc).AddDate(0, 0, horizon)
 	slots := []domain.AvailabilitySlot{}
-	for cursor := start; !cursor.Add(time.Duration(duration)*time.Minute).After(end); cursor = cursor.Add(time.Duration(increment) * time.Minute) {
+	for cursor := start; !cursor.Add(time.Duration(duration) * time.Minute).After(end); cursor = cursor.Add(time.Duration(increment) * time.Minute) {
 		slotEnd := cursor.Add(time.Duration(duration) * time.Minute)
 		bufferedStart := cursor.Add(-time.Duration(before) * time.Minute)
 		bufferedEnd := slotEnd.Add(time.Duration(after) * time.Minute)
