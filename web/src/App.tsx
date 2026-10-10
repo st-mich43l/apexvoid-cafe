@@ -6,7 +6,9 @@ type Order = { id: string; status: 'open' | 'served' | 'cancelled'; total_vnd: n
 type Booth = { id: string; name: string; active: boolean }
 type Booking = { id: string; booth_id: string; booth_name: string; guest_name: string; package_name: string; start: string; end: string; status: 'reserved' | 'checked_in' | 'completed' | 'cancelled'; price_vnd: number }
 type Tab = 'overview' | 'counter' | 'booths' | 'catalog'
+type AppContext = { application_id: string; display_name: string }
 const base = '/api/apps/cafe/v1'
+const fallbackAppContext: AppContext = { application_id: 'cafe', display_name: 'ApexVoid Café' }
 const money = (value: number) => new Intl.NumberFormat('vi-VN').format(value) + ' ₫'
 const timeText = (value: string) => new Date(value).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })
 
@@ -43,6 +45,7 @@ function Banner({ message, onClose }: { message: string | null; onClose: () => v
   return message && <div role="alert" className="banner"><span>{message}</span><button aria-label="Dismiss message" onClick={onClose}><X size={15} /></button></div>
 }
 export function App() {
+  const [appContext, setAppContext] = useState<AppContext>(fallbackAppContext)
   const [tab, setTab] = useState<Tab>('overview')
   const [dark, setDark] = useState(() => localStorage.getItem('apexvoid.cafe.theme') !== 'light')
   const [items, setItems] = useState<Item[]>([])
@@ -63,6 +66,14 @@ export function App() {
   const cartItems = useMemo(() => drinks.filter(item => cart[item.id] > 0), [drinks, cart])
   const cartTotal = cartItems.reduce((sum, item) => sum + item.price_vnd * cart[item.id], 0)
   const activeBookings = bookings.filter(booking => booking.status === 'reserved' || booking.status === 'checked_in')
+  const loadContext = useCallback(async () => {
+    try {
+      const context = await api<AppContext>('/context')
+      if (context.application_id === 'cafe' && context.display_name.trim()) setAppContext({ ...context, display_name: context.display_name.trim() })
+    } catch {
+      // Keep the application-owned fallback when Enterprise metadata is unavailable.
+    }
+  }, [])
   const load = useCallback(async () => {
     setLoading(true)
     const jobs = await Promise.allSettled([api<Item[]>('/menu'), api<Order[]>('/orders'), api<Booth[]>('/booths'), api<Booking[]>('/bookings')])
@@ -81,7 +92,9 @@ export function App() {
     setError(failed.length ? `Unable to load: ${failed.join(', ')}. Check your workspace permissions.` : null)
     setLoading(false)
   }, [])
+  useEffect(() => { void loadContext() }, [loadContext])
   useEffect(() => { void load() }, [load])
+  useEffect(() => { document.title = appContext.display_name }, [appContext.display_name])
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; localStorage.setItem('apexvoid.cafe.theme', dark ? 'dark' : 'light') }, [dark])
   async function mutate<T>(job: () => Promise<T>, success: string): Promise<boolean> {
     setBusy(true); setError(null); setNotice(null)
@@ -112,14 +125,14 @@ export function App() {
   }
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-icon"><Coffee size={23} /></div><div><b>ApexVoid</b><small>CAFÉ & PHOTO</small></div></div>
+      <div className="brand"><div className="brand-icon"><Coffee size={23} /></div><div><b>{appContext.display_name}</b><small>CAFÉ & PHOTO</small></div></div>
       <div className="side-label">WORKSPACE</div>
       <nav aria-label="Café navigation">{appTabs.map(item => <button key={item.key} onClick={() => setTab(item.key)} aria-current={tab === item.key ? 'page' : undefined} className={tab === item.key ? 'nav-active' : ''}><item.icon size={18} />{item.text}</button>)}</nav>
       <div className="side-spacer" />
       <div className="side-bottom"><div className="status-dot" />Connected via ApexVoid Enterprise</div>
     </aside>
     <main className="main">
-      <header className="topbar"><div><div className="crumb">Business applications <span>/</span> Café & Photo Booth</div><h1>{appTabs.find(t => t.key === tab)?.text}</h1></div>
+      <header className="topbar"><div><div className="crumb">Business applications <span>/</span> {appContext.display_name}</div><h1>{appTabs.find(t => t.key === tab)?.text}</h1></div>
         <div className="top-actions"><button className="icon-btn" title="Refresh" aria-label="Refresh data" onClick={() => void load()}><RefreshCw size={18} /></button><button className="icon-btn" title="Toggle color mode" aria-label="Toggle color mode" onClick={() => setDark(current => !current)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div>
       </header>
       <div className="content"><Banner message={error} onClose={() => setError(null)} />{notice && <div className="notice">{notice}</div>}
@@ -139,7 +152,7 @@ export function App() {
             <Pane title="Upcoming and recent sessions">{bookings.map(b => <div key={b.id} className="booking"><div className="booking-time"><Camera size={17} /><span>{timeText(b.start)}</span></div><div className="booking-row"><div><b>{b.guest_name}</b><small>{b.booth_name} · {b.package_name} · {money(b.price_vnd)}</small></div><Pill value={b.status} /></div>{b.status === 'reserved' && <div className="row-actions"><button disabled={busy} onClick={() => void mutate(() => api('/bookings/' + b.id + '/check-in', {}), 'Guest checked in.')}>Check in</button><button disabled={busy} onClick={() => void mutate(() => api('/bookings/' + b.id + '/cancel', {}), 'Reservation cancelled.')}>Cancel</button></div>}{b.status === 'checked_in' && <div className="row-actions"><button disabled={busy} onClick={() => void mutate(() => api('/bookings/' + b.id + '/complete', {}), 'Session completed.')}>Complete</button></div>}</div>)}{!bookings.length && <p className="empty">No photo sessions yet.</p>}</Pane></div>
             <Pane title="Reserve a photo session"><form className="form" onSubmit={book}><label>Booth<select required value={reservation.booth_id} onChange={e => setReservation(p => ({ ...p, booth_id: e.target.value }))}><option value="">Select booth</option>{booths.filter(x => x.active).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Photo package<select required value={reservation.package_id} onChange={e => setReservation(p => ({ ...p, package_id: e.target.value }))}><option value="">Select package</option>{photos.map(x => <option key={x.id} value={x.id}>{x.name} · {money(x.price_vnd)}</option>)}</select></label><label>Guest / group name<input required maxLength={120} value={reservation.guest_name} onChange={e => setReservation(p => ({ ...p, guest_name: e.target.value }))} placeholder="Customer name" /></label><label>Start date & time<input type="datetime-local" required value={reservation.start} onChange={e => setReservation(p => ({ ...p, start: e.target.value }))} /></label><label>Duration<select value={reservation.duration} onChange={e => setReservation(p => ({ ...p, duration: e.target.value }))}>{[15,20,30,45,60].map(n => <option key={n} value={n}>{n} minutes</option>)}</select></label><p className="helper">Booked times are checked by PostgreSQL. Conflicting sessions cannot overlap.</p><button className="primary" disabled={busy || !photos.length || !booths.length}><TicketCheck size={17} />Reserve session</button></form></Pane></div>}
       </div>
-      <footer><span>ApexVoid Café · Independent application</span><span><CreditCard size={13} /> Orders are not payment receipts</span></footer>
+      <footer><span>{appContext.display_name} · Independent application</span><span><CreditCard size={13} /> Orders are not payment receipts</span></footer>
     </main>
   </div>
 }
