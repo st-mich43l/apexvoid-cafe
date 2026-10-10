@@ -669,6 +669,9 @@ func (s *Store) ConfirmHold(ctx context.Context, workspace, actor, id string, in
 	return s.GetBooking(ctx, workspace, bookingID)
 }
 
+// Availability computes candidate slots from one snapshot of occupied ranges,
+// rather than executing one or more SQL statements per time slot. Insertion
+// triggers are still authoritative when staff ultimately create a booking.
 func (s *Store) Availability(ctx context.Context, workspace string, q domain.AvailabilityQuery) ([]domain.AvailabilitySlot, error) {
 	if !domain.ValidID(q.BoothID) || !domain.ValidID(q.PackageID) {
 		return nil, domain.ErrInvalid
@@ -679,24 +682,27 @@ func (s *Store) Availability(ctx context.Context, workspace string, q domain.Ava
 	}
 	defer tx.Rollback()
 	var duration int
-	var tz string
-	err = tx.QueryRowContext(ctx, `SELECT duration_minutes FROM cafe_items WHERE workspace_id=$1 AND id=$2 AND kind='photo' AND active`, workspace, q.PackageID).Scan(&duration)
-	if errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT duration_minutes FROM cafe_items WHERE workspace_id=$1 AND id=$2 AND kind='photo' AND active`, workspace, q.PackageID).Scan(&duration); err != nil {
+		return nil, MapError(err)
+	}
+	var boothActive bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cafe_booths WHERE workspace_id=$1 AND id=$2 AND active)`, workspace, q.BoothID).Scan(&boothActive); err != nil {
+		return nil, MapError(err)
+	}
+	if !boothActive {
 		return nil, domain.ErrInvalid
 	}
-	if err != nil {
-		return nil, MapError(err)
-	}
-	err = tx.QueryRowContext(ctx, `SELECT timezone FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID).Scan(&tz)
+	var timezone string
+	err = tx.QueryRowContext(ctx, `SELECT timezone FROM cafe_operating_schedules WHERE workspace_id=$1
+ AND (booth_id=$2 OR booth_id IS NULL) ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID).Scan(&timezone)
 	if errors.Is(err, sql.ErrNoRows) {
-		tz = "Asia/Ho_Chi_Minh"
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		timezone = "Asia/Ho_Chi_Minh"
+	} else if err != nil {
 		return nil, MapError(err)
 	}
-	loc, e := time.LoadLocation(tz)
-	if e != nil {
-		loc, _ = time.LoadLocation("Asia/Ho_Chi_Minh")
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, domain.ErrInvalid
 	}
 	day := q.Date.In(loc)
 	if q.Date.IsZero() {
@@ -704,25 +710,24 @@ func (s *Store) Availability(ctx context.Context, workspace string, q domain.Ava
 	}
 	var open, close string
 	var closed bool
-	var increment, minAdvance, horizon, bufferBefore, bufferAfter int
-	err = tx.QueryRowContext(ctx, `SELECT to_char(open_time,'HH24:MI'),to_char(close_time,'HH24:MI'),closed,slot_increment_minutes,min_advance_minutes,max_horizon_days FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND weekday=$3 ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID, int(day.Weekday())).Scan(&open, &close, &closed, &increment, &minAdvance, &horizon)
+	var increment, minAdvance, horizon, before, after int
+	err = tx.QueryRowContext(ctx, `SELECT to_char(open_time,'HH24:MI'),to_char(close_time,'HH24:MI'),closed,
+ slot_increment_minutes,min_advance_minutes,max_horizon_days,buffer_before_minutes,buffer_after_minutes
+ FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND weekday=$3
+ ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID, int(day.Weekday())).Scan(&open, &close, &closed, &increment, &minAdvance, &horizon, &before, &after)
 	if errors.Is(err, sql.ErrNoRows) {
-		open, close, increment, minAdvance, horizon, bufferBefore, bufferAfter = "09:00", "21:00", 15, 30, 90, 0, 0
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		open, close, increment, minAdvance, horizon = "09:00", "21:00", 15, 30, 90
+	} else if err != nil {
 		return nil, MapError(err)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		_ = tx.QueryRowContext(ctx, `SELECT buffer_before_minutes,buffer_after_minutes FROM cafe_operating_schedules WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND weekday=$3 ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID, int(day.Weekday())).Scan(&bufferBefore, &bufferAfter)
 	}
 	var exceptionClosed bool
 	var exceptionOpen, exceptionClose string
-	err = tx.QueryRowContext(ctx, `SELECT closed,coalesce(to_char(open_time,'HH24:MI'),''),coalesce(to_char(close_time,'HH24:MI'),'') FROM cafe_schedule_exceptions WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND local_date=$3 ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID, day.Format("2006-01-02")).Scan(&exceptionClosed, &exceptionOpen, &exceptionClose)
+	err = tx.QueryRowContext(ctx, `SELECT closed,coalesce(to_char(open_time,'HH24:MI'),''),coalesce(to_char(close_time,'HH24:MI'),'')
+ FROM cafe_schedule_exceptions WHERE workspace_id=$1 AND (booth_id=$2 OR booth_id IS NULL) AND local_date=$3
+ ORDER BY booth_id NULLS LAST LIMIT 1`, workspace, q.BoothID, day.Format("2006-01-02")).Scan(&exceptionClosed, &exceptionOpen, &exceptionClose)
 	if err == nil {
-		if exceptionClosed {
-			return []domain.AvailabilitySlot{}, nil
-		}
-		if exceptionOpen != "" {
+		closed = exceptionClosed
+		if exceptionOpen != "" && exceptionClose != "" {
 			open, close = exceptionOpen, exceptionClose
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -731,23 +736,62 @@ func (s *Store) Availability(ctx context.Context, workspace string, q domain.Ava
 	if closed {
 		return []domain.AvailabilitySlot{}, nil
 	}
-	start, parseStartErr := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+open, loc)
-	endOfDay, parseEndErr := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+close, loc)
-	if parseStartErr != nil || parseEndErr != nil || !endOfDay.After(start) {
+	start, startErr := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+open, loc)
+	end, endErr := time.ParseInLocation("2006-01-02 15:04", day.Format("2006-01-02")+" "+close, loc)
+	if startErr != nil || endErr != nil || !end.After(start) {
 		return []domain.AvailabilitySlot{}, nil
 	}
-	slots := []domain.AvailabilitySlot{}
-	minimum := time.Now().In(loc).Add(time.Duration(minAdvance) * time.Minute)
-	maximum := time.Now().In(loc).AddDate(0, 0, horizon)
-	for cursor := start; cursor.Add(time.Duration(duration)*time.Minute).Before(endOfDay) || cursor.Add(time.Duration(duration)*time.Minute).Equal(endOfDay); cursor = cursor.Add(time.Duration(increment) * time.Minute) {
-		slotEnd := cursor.Add(time.Duration(duration) * time.Minute)
-		occupiedStart, occupiedEnd := cursor.Add(-time.Duration(bufferBefore)*time.Minute), slotEnd.Add(time.Duration(bufferAfter)*time.Minute)
-		var blocked bool
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cafe.cafe_bookings b WHERE b.workspace_id=$1 AND b.booth_id=$2 AND b.status IN ('confirmed','checked_in','in_progress') AND tstzrange(b.start_at - make_interval(mins => b.buffer_before_minutes),b.end_at + make_interval(mins => b.buffer_after_minutes),'[)') && tstzrange($3,$4,'[)')) OR EXISTS(SELECT 1 FROM cafe.cafe_booking_holds h WHERE h.workspace_id=$1 AND h.booth_id=$2 AND h.status='active' AND h.expires_at>now() AND tstzrange(h.start_at,h.end_at,'[)') && tstzrange($3,$4,'[)')) OR EXISTS(SELECT 1 FROM cafe.cafe_booth_blackouts x WHERE x.workspace_id=$1 AND (x.booth_id=$2 OR x.booth_id IS NULL) AND tstzrange(x.start_at,x.end_at,'[)') && tstzrange($3,$4,'[)'))`, workspace, q.BoothID, occupiedStart, occupiedEnd).Scan(&blocked)
-		if err != nil {
+	type occupiedRange struct{ start, end time.Time }
+	occupied := []occupiedRange{}
+	// Allow for buffers extending past either side of the operating day.
+	windowStart := start.Add(-5 * time.Hour)
+	windowEnd := end.Add(5 * time.Hour)
+	rows, err := tx.QueryContext(ctx, `SELECT start_at - make_interval(mins=>buffer_before_minutes),
+ end_at + make_interval(mins=>buffer_after_minutes) FROM cafe_bookings
+ WHERE workspace_id=$1 AND booth_id=$2 AND status IN ('confirmed','checked_in','in_progress')
+ AND start_at<$4 AND end_at>$3
+ UNION ALL
+ SELECT start_at - make_interval(mins=>buffer_before_minutes),
+ end_at + make_interval(mins=>buffer_after_minutes) FROM cafe_booking_holds
+ WHERE workspace_id=$1 AND booth_id=$2 AND status='active' AND expires_at>now()
+ AND start_at<$4 AND end_at>$3
+ UNION ALL
+ SELECT start_at,end_at FROM cafe_booth_blackouts WHERE workspace_id=$1
+ AND (booth_id=$2 OR booth_id IS NULL) AND start_at<$4 AND end_at>$3`, workspace, q.BoothID, windowStart, windowEnd)
+	if err != nil {
+		return nil, MapError(err)
+	}
+	for rows.Next() {
+		var r occupiedRange
+		if err := rows.Scan(&r.start, &r.end); err != nil {
+			rows.Close()
 			return nil, MapError(err)
 		}
-		if !blocked && cursor.After(minimum) && cursor.Before(maximum) {
+		occupied = append(occupied, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, MapError(err)
+	}
+	rows.Close()
+	minimum := time.Now().Add(time.Duration(minAdvance) * time.Minute)
+	maximum := time.Now().In(loc).AddDate(0, 0, horizon)
+	slots := []domain.AvailabilitySlot{}
+	for cursor := start; !cursor.Add(time.Duration(duration)*time.Minute).After(end); cursor = cursor.Add(time.Duration(increment) * time.Minute) {
+		slotEnd := cursor.Add(time.Duration(duration) * time.Minute)
+		bufferedStart := cursor.Add(-time.Duration(before) * time.Minute)
+		bufferedEnd := slotEnd.Add(time.Duration(after) * time.Minute)
+		if bufferedStart.Before(start) || bufferedEnd.After(end) || cursor.Before(minimum) || cursor.After(maximum) {
+			continue
+		}
+		clashes := false
+		for _, r := range occupied {
+			if bufferedStart.Before(r.end) && bufferedEnd.After(r.start) {
+				clashes = true
+				break
+			}
+		}
+		if !clashes {
 			slots = append(slots, domain.AvailabilitySlot{Start: cursor.UTC(), End: slotEnd.UTC()})
 		}
 	}
