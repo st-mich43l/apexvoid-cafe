@@ -136,10 +136,31 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	// A generated reference and the upgraded status default must be present
 	// even though application INSERT statements omit those two columns.
 	future := start.Add(90 * time.Minute)
-	input := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "First", PartySize: 2, Start: future, End: future.Add(20 * time.Minute)}
+	input := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "First", GuestPhone: "0909876543", GuestEmail: "first@example.com", PartySize: 2, Start: future, End: future.Add(20 * time.Minute)}
 	created, err := store.CreateBooking(ctx, workspace, actor, input)
 	if err != nil || !strings.HasPrefix(created.BookingRef, "PBT-") || created.Status != "confirmed" {
 		t.Fatalf("new booking: %+v %v", created, err)
+	}
+	// Customer care must locate a guest across all booking dates by reference,
+	// name, phone or email, without leaking another workspace's bookings.
+	for _, term := range []string{created.BookingRef, "First", "0909876543", "first@example.com"} {
+		results, err := store.ListBookings(ctx, workspace, domain.BookingFilter{Guest: term, Page: 1, PageSize: 20})
+		if err != nil {
+			t.Fatalf("care search %q failed: %v", term, err)
+		}
+		found := false
+		for _, match := range results.Items {
+			if match.ID == created.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("care search %q failed to locate booking %s", term, created.ID)
+		}
+	}
+	isolated, err := store.ListBookings(ctx, uuid(t), domain.BookingFilter{Guest: created.BookingRef})
+	if err != nil || isolated.Total != 0 {
+		t.Fatalf("workspace isolation failed for care search: %+v %v", isolated, err)
 	}
 	// Concurrent writers must serialize at the database trigger, not just
 	// rely on an application-level availability preview.

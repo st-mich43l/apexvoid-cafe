@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { enterpriseFetch } from './enterpriseSession'
-import { CalendarDays, Camera, Check, ChevronLeft, ChevronRight, Clock3, Coffee, History, LayoutDashboard, Moon, Plus, RefreshCw, Search, Settings2, Sun, TicketCheck, UserRound, X } from 'lucide-react'
+import { GuestCareDesk } from './GuestCareDesk'
+import { CalendarDays, Camera, Check, ChevronLeft, ChevronRight, Clock3, Coffee, History, HeartHandshake, LayoutDashboard, Moon, Plus, RefreshCw, Search, Settings2, Sun, TicketCheck, UserRound, X } from 'lucide-react'
 
 type Item = { id: string; name: string; sku: string; kind: 'drink' | 'photo'; price_vnd: number; duration_minutes: number; active: boolean }
 type Order = { id: string; status: 'open' | 'served' | 'cancelled'; total_vnd: number; note: string; created_at: string }
 type Booth = { id: string; name: string; active: boolean }
 type BookingStatus = 'confirmed' | 'checked_in' | 'in_progress' | 'completed' | 'cancelled' | 'no_show'
-type Booking = { id: string; booking_ref: string; booth_id: string; booth_name: string; package_id: string; guest_name: string; guest_phone?: string; guest_email?: string; package_name: string; start: string; end: string; status: BookingStatus; price_vnd: number; party_size: number; notes?: string; created_at: string; updated_at: string }
+export type Booking = { id: string; booking_ref: string; booth_id: string; booth_name: string; package_id: string; guest_name: string; guest_phone?: string; guest_email?: string; package_name: string; start: string; end: string; status: BookingStatus; price_vnd: number; party_size: number; notes?: string; cancellation_reason?: string; no_show_reason?: string; created_at: string; updated_at: string }
 type BookingEvent = { id: string; event_type: string; from_status?: string; to_status?: string; reason?: string; changes?: Record<string, unknown>; created_at: string; actor_id: string }
 type Schedule = { id: string; booth_id?: string; weekday: number; open_time: string; close_time: string; closed: boolean; slot_increment_minutes: number; min_advance_minutes: number; max_horizon_days: number; timezone: string }
 type Blackout = { id: string; booth_id?: string; start: string; end: string; reason: string }
-type Page<T> = { items: T[]; page: number; page_size: number; total: number; has_more: boolean }
-type Tab = 'overview' | 'bookings' | 'history' | 'counter' | 'setup'
+export type Page<T> = { items: T[]; page: number; page_size: number; total: number; has_more: boolean }
+type Tab = 'overview' | 'care' | 'bookings' | 'history' | 'counter' | 'setup'
 type AppContext = { application_id: string; display_name: string }
 
 const base = '/api/apps/photobooth/v1'
@@ -58,6 +59,7 @@ async function api<T>(path: string, options: { method?: string; body?: unknown }
 const appTabs: { key: Tab; text: string; icon: typeof Coffee }[] = [
   { key: 'overview', text: 'Overview', icon: LayoutDashboard },
   { key: 'bookings', text: 'Bookings', icon: CalendarDays },
+  { key: 'care', text: 'Guest care', icon: HeartHandshake },
   { key: 'history', text: 'Booking history', icon: History },
   { key: 'counter', text: 'Photobooth counter', icon: Coffee },
   { key: 'setup', text: 'Operations setup', icon: Settings2 },
@@ -76,6 +78,8 @@ export function App() {
   const [booths, setBooths] = useState<Booth[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [historyPage, setHistoryPage] = useState(1)
+  const [careRefreshKey, setCareRefreshKey] = useState(0)
+  const selectionRequest = useRef(0)
   const [bookingHistory, setBookingHistory] = useState<Page<Booking>>({ items: [], page: 1, page_size: 50, total: 0, has_more: false })
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [blackouts, setBlackouts] = useState<Blackout[]>([])
@@ -134,8 +138,39 @@ export function App() {
     setError(failed.length ? `Unable to load ${failed.join(', ')}. Check workspace permissions or migration readiness.` : null)
     setLoading(false)
   }, [fetchCalendarBookings, historyPage])
+  const searchGuestBookings = useCallback((guest: string, status: string, page: number) =>
+    api<Page<Booking>>(`/bookings?guest=${encodeURIComponent(guest)}&status=${encodeURIComponent(status)}&page=${page}&page_size=20`), [])
+  const loadTodayBookings = useCallback(async () => {
+    // Never infer the venue's day from the browser timezone.
+    const today = bookingDateTimeInput(new Date().toISOString()).slice(0, 10)
+    const from = vietnamLocalToISO(`${today}T00:00`)
+    const next = new Date(from)
+    next.setUTCDate(next.getUTCDate() + 1)
+    const to = next.toISOString()
+    const items: Booking[] = []
+    for (let page = 1; page <= 50; page++) {
+      const result = await api<Page<Booking>>(`/bookings?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&page=${page}&page_size=200`)
+      items.push(...result.items.filter(item => bookingDateTimeInput(item.start).slice(0, 10) === today))
+      if (!result.has_more) return items
+    }
+    throw new Error('Too many reservations to load at once; contact an administrator.')
+  }, [])
   const loadOperations = useCallback(async () => { const results = await Promise.allSettled([api<Schedule[]>('/schedules'), api<Blackout[]>('/blackouts')]); if (results[0].status === 'fulfilled') setSchedules(results[0].value); if (results[1].status === 'fulfilled') setBlackouts(results[1].value) }, [])
-  const loadEvents = useCallback(async (booking: Booking) => { setSelectedBooking(booking); try { setEvents(await api<BookingEvent[]>(`/bookings/${booking.id}/events`)) } catch { setEvents([]) } }, [])
+  const loadEvents = useCallback(async (booking: Booking) => {
+    const request = ++selectionRequest.current
+    setSelectedBooking(booking)
+    setEvents([])
+    // Load the latest status even when the calendar/search result is stale.
+    const [current, timeline] = await Promise.allSettled([
+      api<Booking>(`/bookings/${booking.id}`),
+      api<BookingEvent[]>(`/bookings/${booking.id}/events`),
+    ])
+    if (request !== selectionRequest.current) return
+    if (current.status === 'fulfilled') {
+      setSelectedBooking(selected => selected?.id === booking.id ? current.value : selected)
+    }
+    setEvents(timeline.status === 'fulfilled' ? timeline.value : [])
+  }, [])
 
   useEffect(() => { void loadContext(); void load(); void loadOperations() }, [loadContext, load, loadOperations])
   useEffect(() => { document.title = appContext.display_name; document.documentElement.dataset.theme = dark ? 'dark' : 'light'; localStorage.setItem('apexvoid.photobooth.theme', dark ? 'dark' : 'light') }, [appContext.display_name, dark])
@@ -155,23 +190,24 @@ export function App() {
     return () => { active = false }
   }, [reservation.booth_id, reservation.package_id, selectedDate])
 
-  async function mutate<T>(job: () => Promise<T>, success: string, after?: () => void) { setBusy(true); setError(null); setNotice(null); try { await job(); setNotice(success); after?.(); await load(); await loadOperations() } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed') } finally { setBusy(false) } }
+  async function mutate<T>(job: () => Promise<T>, success: string, after?: (result: T) => void) { setBusy(true); setError(null); setNotice(null); try { const result = await job(); setNotice(success); after?.(result); await load(); await loadOperations(); setCareRefreshKey(current => current + 1) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed') } finally { setBusy(false) } }
   function navigate(next: Tab) { setNotice(null); setError(null); setTab(next) }
   function makeOrder(event: FormEvent) { event.preventDefault(); if (!cartItems.length) return; void mutate(() => api('/orders', { body: { note: orderNote, lines: cartItems.map(item => ({ item_id: item.id, quantity: cart[item.id] })) } }), 'Order opened.', () => { setCart({}); setOrderNote('') }) }
   function addItem(event: FormEvent) { event.preventDefault(); const price = Number(newItem.price_vnd.replace(/\D/g, '')); const duration = Number(newItem.duration_minutes); if (!Number.isSafeInteger(price) || price < 0 || !Number.isInteger(duration) || duration < 5 || duration > 480) { setError('Enter a valid price and duration.'); return } void mutate(() => api('/menu', { body: { ...newItem, price_vnd: price, duration_minutes: duration } }), 'Catalog item created.', () => setNewItem({ name: '', sku: '', kind: 'drink', price_vnd: '', duration_minutes: '20' })) }
   function book(event: FormEvent, after?: () => void) { event.preventDefault(); const slot = slots.find(item => item.start === reservation.slot); if (!slot) { setError('Choose a backend-confirmed available slot.'); return } void mutate(() => api('/bookings', { body: { booth_id: reservation.booth_id, package_id: reservation.package_id, guest_name: reservation.guest_name, guest_phone: reservation.guest_phone, party_size: Number(reservation.party_size), notes: reservation.notes, start: slot.start, end: slot.end, idempotency_key: crypto.randomUUID() } }), 'Reservation confirmed.', () => { setReservation(current => ({ ...current, guest_name: '', guest_phone: '', notes: '', slot: '' })); after?.() }) }
-  function transition(booking: Booking, action: string, reason = '') { void mutate(() => api(`/bookings/${booking.id}/${action}`, { body: { reason } }), `${action === 'check-in' ? 'Guest checked in.' : action === 'start' ? 'Session started.' : action === 'complete' ? 'Session completed.' : action === 'no-show' ? 'Marked as no-show.' : 'Booking cancelled.'}`) }
-  function reschedule(booking: Booking, startValue: string) { const start = new Date(vietnamLocalToISO(startValue)); if (!Number.isFinite(start.getTime())) { setError('Choose a valid reschedule time.'); return }; const end = new Date(start.getTime() + (new Date(booking.end).getTime() - new Date(booking.start).getTime())); void mutate(() => api(`/bookings/${booking.id}/reschedule`, { body: { booth_id: booking.booth_id, package_id: booking.package_id, guest_name: booking.guest_name, guest_phone: booking.guest_phone ?? '', guest_email: booking.guest_email ?? '', party_size: booking.party_size, notes: booking.notes ?? '', start: start.toISOString(), end: end.toISOString() } }), 'Booking rescheduled.') }
+  function transition(booking: Booking, action: string, reason = '') { void mutate(() => api<Booking>(`/bookings/${booking.id}/${action}`, { body: { reason } }), `${action === 'check-in' ? 'Guest checked in.' : action === 'start' ? 'Session started.' : action === 'complete' ? 'Session completed.' : action === 'no-show' ? 'Marked as no-show.' : 'Booking cancelled.'}`, updated => { if (selectedBooking?.id === booking.id) void loadEvents(updated) }) }
+  function reschedule(booking: Booking, startValue: string) { const start = new Date(vietnamLocalToISO(startValue)); if (!Number.isFinite(start.getTime())) { setError('Choose a valid reschedule time.'); return }; const end = new Date(start.getTime() + (new Date(booking.end).getTime() - new Date(booking.start).getTime())); void mutate(() => api<Booking>(`/bookings/${booking.id}/reschedule`, { body: { booth_id: booking.booth_id, package_id: booking.package_id, guest_name: booking.guest_name, guest_phone: booking.guest_phone ?? '', guest_email: booking.guest_email ?? '', party_size: booking.party_size, notes: booking.notes ?? '', start: start.toISOString(), end: end.toISOString() } }), 'Booking rescheduled.', updated => { if (selectedBooking?.id === booking.id) void loadEvents(updated) }) }
   const visibleBookings = bookings.filter(item => (!bookingFilter.booth || item.booth_id === bookingFilter.booth) && (!bookingFilter.status || item.status === bookingFilter.status) && (!bookingFilter.guest || item.guest_name.toLowerCase().includes(bookingFilter.guest.toLowerCase())))
   const dayBookings = visibleBookings.filter(item => { const key = dateKey(selectedDate); return dateKey(new Date(item.start)) === key || dateKey(new Date(item.end)) === key })
 
-  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><Coffee size={23} /></div><div><b>{appContext.display_name}</b><small>PHOTOBOOTH OPS</small></div></div><div className="side-label">WORKSPACE</div><nav aria-label="Photobooth navigation">{appTabs.map(item => <button key={item.key} onClick={() => navigate(item.key)} aria-current={tab === item.key ? 'page' : undefined} className={tab === item.key ? 'nav-active' : ''}><item.icon size={18} />{item.text}</button>)}</nav><div className="side-spacer" /><div className="side-bottom"><div className="status-dot" />Connected via ApexVoid Enterprise</div></aside><main className="main"><header className="topbar"><div><div className="crumb">Business applications <span>/</span> {appContext.display_name}</div><h1>{appTabs.find(item => item.key === tab)?.text}</h1></div><div className="top-actions"><button className="icon-btn" title="Refresh" aria-label="Refresh data" onClick={() => void load()}><RefreshCw size={18} /></button><button className="icon-btn" title="Toggle color mode" aria-label="Toggle color mode" onClick={() => setDark(current => !current)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header><div className="content"><Banner message={error} onClose={() => setError(null)} />{notice && <div className="notice">{notice}</div>}{loading && <div className="loading">Synchronizing Photobooth workspace…</div>}
+  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><Coffee size={23} /></div><div><b>{appContext.display_name}</b><small>PHOTOBOOTH OPS</small></div></div><div className="side-label">WORKSPACE</div><nav aria-label="Photobooth navigation">{appTabs.map(item => <button key={item.key} onClick={() => navigate(item.key)} aria-current={tab === item.key ? 'page' : undefined} className={tab === item.key ? 'nav-active' : ''}><item.icon size={18} />{item.text}</button>)}</nav><div className="side-spacer" /><div className="side-bottom"><div className="status-dot" />Connected via ApexVoid Enterprise</div></aside><main className="main"><header className="topbar"><div><div className="crumb">Business applications <span>/</span> {appContext.display_name}</div><h1>{appTabs.find(item => item.key === tab)?.text}</h1></div><div className="top-actions"><button className="icon-btn" title="Refresh" aria-label="Refresh data" onClick={() => { void load(); setCareRefreshKey(current => current + 1) }}><RefreshCw size={18} /></button><button className="icon-btn" title="Toggle color mode" aria-label="Toggle color mode" onClick={() => setDark(current => !current)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header><div className="content"><Banner message={error} onClose={() => setError(null)} />{notice && <div className="notice">{notice}</div>}{loading && <div className="loading">Synchronizing Photobooth workspace…</div>}
         {tab === 'overview' && <><div className="intro"><div className="eyebrow">PHOTOBOOTH OPERATIONS</div><h2>Great sessions. Lasting memories.</h2><p>Coordinate photo-booth reservations, guest flow, and the optional café counter from one workspace-aware application.</p><button className="primary intro-button" onClick={() => navigate('bookings')}><CalendarDays size={16} />Open booking calendar</button></div><div className="stats"><div><span>Today's bookings</span><strong>{bookings.filter(item => dateKey(new Date(item.start)) === dateKey(new Date())).length}</strong><small>All booking states</small><CalendarDays size={21} /></div><div><span>Checked in</span><strong>{bookings.filter(item => item.status === 'checked_in').length}</strong><small>Guests on site</small><UserRound size={21} /></div><div><span>Sessions live</span><strong>{bookings.filter(item => item.status === 'in_progress').length}</strong><small>Booths in use</small><Camera size={21} /></div><div><span>Completed</span><strong>{bookings.filter(item => item.status === 'completed').length}</strong><small>Loaded booking history</small><Check size={21} /></div></div><div className="columns"><Pane title="Next reservations" extra={<button className="text-action" onClick={() => navigate('bookings')}>Open calendar →</button>}>{activeBookings.slice(0, 6).map(item => <BookingRow key={item.id} booking={item} onClick={() => void loadEvents(item)} />)}{!activeBookings.length && <p className="empty">No active reservations. The calendar is ready for the next guest.</p>}</Pane><Pane title="Booth utilization"><div className="utilization-list">{booths.map(booth => { const count = activeBookings.filter(item => item.booth_id === booth.id).length; return <div className="utilization" key={booth.id}><div><b>{booth.name}</b><small>{count ? `${count} active session${count > 1 ? 's' : ''}` : 'Available today'}</small></div><div className="progress"><i style={{ width: `${Math.min(100, count * 38)}%` }} /></div></div> })}{!booths.length && <p className="empty">Add a booth in Operations setup.</p>}</div></Pane></div></>}
         {tab === 'bookings' && <BookingWorkspace booths={booths} photos={photos} bookings={visibleBookings} dayBookings={dayBookings} days={days} selectedDate={selectedDate} setSelectedDate={setSelectedDate} calendarMode={calendarMode} setCalendarMode={setCalendarMode} bookingFilter={bookingFilter} setBookingFilter={setBookingFilter} reservation={reservation} setReservation={setReservation} slots={slots} book={book} availabilityLoading={availabilityLoading} availabilityError={availabilityError} busy={busy} loadEvents={loadEvents} transition={transition} />}
+        {tab === 'care' && <GuestCareDesk loadTodayBookings={loadTodayBookings} refreshKey={careRefreshKey} searchBookings={searchGuestBookings} onOpenBooking={loadEvents} onOpenCalendar={() => navigate('bookings')} />}
         {tab === 'history' && <HistoryView bookings={bookingHistory.items} page={bookingHistory.page} total={bookingHistory.total} hasMore={bookingHistory.has_more} onPageChange={setHistoryPage} selectedBooking={selectedBooking} events={events} loadEvents={loadEvents} />}
         {tab === 'counter' && <CounterView drinks={drinks} orders={orders} cart={cart} setCart={setCart} cartItems={cartItems} cartTotal={cartTotal} orderNote={orderNote} setOrderNote={setOrderNote} makeOrder={makeOrder} busy={busy} transitionOrder={(id, action) => void mutate(() => api(`/orders/${id}/${action}`, { body: {} }), `Order ${action}d.`)} />}
         {tab === 'setup' && <SetupView items={items} newItem={newItem} setNewItem={setNewItem} addItem={addItem} booths={booths} boothName={boothName} setBoothName={setBoothName} addBooth={() => void mutate(() => api('/booths', { body: { name: boothName } }), 'Booth created.', () => setBoothName(''))} schedules={schedules} saveSchedule={(schedule) => void mutate(() => api(`/schedules/${schedule.weekday}`, { method: 'PUT', body: schedule }), 'Schedule saved.', loadOperations)} blackouts={blackouts} blackout={blackout} setBlackout={setBlackout} addBlackout={() => void mutate(() => api('/blackouts', { body: blackout }), 'Blackout added.', () => setBlackout({ booth_id: '', start: '', end: '', reason: '' }))} deleteBlackout={(id) => void mutate(() => api(`/blackouts/${id}`, { method: 'DELETE' }), 'Blackout removed.', loadOperations)} busy={busy} />}
-      </div><footer><span>{appContext.display_name} · Workspace-isolated application</span><span><TicketCheck size={13} /> Booking times are checked by the backend</span></footer></main>{selectedBooking && <BookingDrawer booking={selectedBooking} events={events} onClose={() => setSelectedBooking(null)} transition={transition} reschedule={reschedule} />}</div>
+      </div><footer><span>{appContext.display_name} · Workspace-isolated application</span><span><TicketCheck size={13} /> Booking times are checked by the backend</span></footer></main>{selectedBooking && <BookingDrawer booking={selectedBooking} events={events} onClose={() => { selectionRequest.current++; setSelectedBooking(null) }} transition={transition} reschedule={reschedule} busy={busy} />}</div>
 }
 
 function BookingRow({ booking, onClick }: { booking: Booking; onClick: () => void }) { return <button className="record record-button" onClick={onClick}><div><b>{booking.booking_ref || `#${booking.id.slice(0, 8)}`} · {booking.guest_name}</b><small>{booking.booth_name} · {timeText(booking.start)} · {booking.package_name}</small></div><Pill value={booking.status} /></button> }
@@ -267,7 +303,85 @@ function BookingCreateModal({ booths, photos, selectedDate, setSelectedDate, res
 
 function HistoryView({ bookings, page, total, hasMore, onPageChange, selectedBooking, events, loadEvents }: { bookings: Booking[]; page: number; total: number; hasMore: boolean; onPageChange: (value: number) => void; selectedBooking: Booking | null; events: BookingEvent[]; loadEvents: (booking: Booking) => void }) { return <div className="history-layout"><Pane title="Booking history" extra={<span className="subtle">{total} record{total === 1 ? '' : 's'} · page {page}</span>}><div className="history-table"><div className="history-head"><span>Reference</span><span>Guest</span><span>Session</span><span>Status</span></div>{bookings.map(item => <button className={`history-row${selectedBooking?.id === item.id ? ' is-selected' : ''}`} key={item.id} onClick={() => loadEvents(item)}><b>{item.booking_ref || item.id.slice(0, 8)}</b><span>{item.guest_name}<small>{item.guest_phone || 'No contact'}</small></span><span>{timeText(item.start)}<small>{item.booth_name}</small></span><Pill value={item.status} /></button>)}{!bookings.length && <div className="history-empty"><div className="history-empty-icon"><History size={20} /></div><b>No booking history yet</b><p>Confirmed sessions will appear here once your first reservation is created.</p></div>}</div><div className="history-pagination" aria-label="Booking history pages"><button className="history-page-button" disabled={page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}><ChevronLeft size={14} />Previous</button><span className="history-page-current">Page {page}</span><button className="history-page-button" disabled={!hasMore} onClick={() => onPageChange(page + 1)}>Next<ChevronRight size={14} /></button></div></Pane><Pane title={selectedBooking ? `${selectedBooking.booking_ref} activity` : 'Select a booking'}>{selectedBooking ? <div className="timeline">{events.map(event => <div className="timeline-item" key={event.id}><i /><div><b>{statusLabel(event.event_type)}</b><small>{timeText(event.created_at)} · {event.actor_id.slice(0, 8)}</small>{event.reason && <p>{event.reason}</p>}</div></div>)}{!events.length && <p className="empty">No events recorded.</p>}</div> : <div className="history-selection-empty"><div className="history-empty-icon"><History size={20} /></div><b>Select a booking</b><p>Click a booking to inspect its immutable activity timeline.</p></div>}</Pane></div> }
 
-function BookingDrawer({ booking, events, onClose, transition, reschedule }: { booking: Booking; events: BookingEvent[]; onClose: () => void; transition: (booking: Booking, action: string, reason?: string) => void; reschedule: (booking: Booking, start: string) => void }) { const [start, setStart] = useState(() => bookingDateTimeInput(booking.start)); return <div className="drawer-backdrop" onClick={onClose}><aside className="drawer" onClick={event => event.stopPropagation()}><div className="drawer-head"><div><span className="eyebrow">{booking.booking_ref}</span><h2>{booking.guest_name}</h2><small>{booking.booth_name} · {booking.package_name}</small></div><button className="icon-btn" onClick={onClose} aria-label="Close booking details"><X size={17} /></button></div><div className="drawer-body"><div className="detail-grid"><div><small>Session</small><b>{timeText(booking.start)}</b></div><div><small>Party</small><b>{booking.party_size} guest{booking.party_size === 1 ? '' : 's'}</b></div><div><small>Contact</small><b>{booking.guest_phone || 'Not provided'}</b></div><div><small>Status</small><Pill value={booking.status} /></div></div>{booking.notes && <p className="detail-note">{booking.notes}</p>}<div className="drawer-actions">{booking.status === 'confirmed' && <button onClick={() => transition(booking, 'check-in')}>Check in</button>}{booking.status === 'checked_in' && <button onClick={() => transition(booking, 'start')}>Start session</button>}{booking.status === 'in_progress' && <button onClick={() => transition(booking, 'complete')}>Complete</button>}{['confirmed', 'checked_in'].includes(booking.status) && <button onClick={() => transition(booking, 'cancel', 'Cancelled by staff')}>Cancel</button>}</div>{booking.status === 'confirmed' && <form className="reschedule-form" onSubmit={event => { event.preventDefault(); reschedule(booking, start) }}><label>Reschedule session<input type="datetime-local" value={start} onChange={event => setStart(event.target.value)} /></label><button className="primary" type="submit"><CalendarDays size={15} />Save new time</button></form>}<h3>Activity timeline</h3><div className="timeline">{events.map(event => <div className="timeline-item" key={event.id}><i /><div><b>{statusLabel(event.event_type)}</b><small>{timeText(event.created_at)}</small></div></div>)}</div></div></aside></div> }
+function BookingDrawer({ booking, events, onClose, transition, reschedule, busy }: {
+  booking: Booking; events: BookingEvent[]; onClose: () => void; busy: boolean
+  transition: (booking: Booking, action: string, reason?: string) => void
+  reschedule: (booking: Booking, start: string) => void
+}) {
+  const [start, setStart] = useState(() => bookingDateTimeInput(booking.start))
+  const [pendingAction, setPendingAction] = useState<'cancel' | 'no-show' | null>(null)
+  const [reason, setReason] = useState('')
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { setStart(bookingDateTimeInput(booking.start)); setPendingAction(null); setReason('') }, [booking.id, booking.start, booking.status])
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onClose() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose, busy])
+  const normalizedPhone = (booking.guest_phone ?? '').replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
+  const phoneHref = /^\+?\d{7,15}$/.test(normalizedPhone) ? 'tel:' + normalizedPhone : null
+  const email = booking.guest_email?.trim()
+  const emailHref = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? 'mailto:' + email : null
+  const copyReference = async () => {
+    if (!booking.booking_ref || !navigator.clipboard) return
+    try { await navigator.clipboard.writeText(booking.booking_ref); setCopied(true) }
+    catch { setCopied(false) }
+  }
+  const recordReason = (event: FormEvent) => {
+    event.preventDefault()
+    if (!pendingAction || !reason.trim()) return
+    transition(booking, pendingAction, reason.trim())
+  }
+  return <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
+    <aside className="drawer care-booking-drawer" role="dialog" aria-modal="true" aria-label={`Guest details for ${booking.guest_name}`}>
+      <header className="drawer-head">
+        <div><span className="eyebrow">GUEST BOOKING</span><h2>{booking.guest_name}</h2><small>{booking.booth_name} · {booking.package_name}</small></div>
+        <button className="icon-btn" type="button" disabled={busy} onClick={onClose} aria-label="Close booking details"><X size={17} /></button>
+      </header>
+      <div className="drawer-body">
+        <div className="care-drawer-status"><Pill value={booking.status} /><span>{timeText(booking.start)}</span></div>
+        <div className="care-reference">
+          <div><small>Booking reference</small><strong>{booking.booking_ref || booking.id.slice(0, 8)}</strong></div>
+          <button type="button" disabled={!booking.booking_ref || !navigator.clipboard} onClick={() => void copyReference()}>{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+        <div className="detail-grid">
+          <div><small>Session time</small><b>{timeText(booking.start)}</b></div>
+          <div><small>Party size</small><b>{booking.party_size} guest{booking.party_size === 1 ? '' : 's'}</b></div>
+          <div><small>Contact phone</small><b>{booking.guest_phone || 'Not provided'}</b></div>
+          <div><small>Package</small><b>{booking.package_name}</b></div>
+        </div>
+        <div className="care-contact-actions">
+          {phoneHref && <a href={phoneHref} className="care-button care-button-primary">Call guest</a>}
+          {emailHref && <a href={emailHref} className="care-button care-button-secondary">Email guest</a>}
+          {!phoneHref && !emailHref && <span className="care-hint">No callable phone or valid email is saved for this guest.</span>}
+        </div>
+        {booking.notes && <div className="care-guest-notes"><small>Preparation and guest notes</small><p>{booking.notes}</p></div>}
+        {(booking.cancellation_reason || booking.no_show_reason) && <p className="detail-note">{booking.cancellation_reason || booking.no_show_reason}</p>}
+        <h3>Session actions</h3>
+        <div className="drawer-actions">
+          {booking.status === 'confirmed' && <button type="button" disabled={busy} onClick={() => transition(booking, 'check-in')}>Check in guest</button>}
+          {booking.status === 'checked_in' && <button type="button" disabled={busy} onClick={() => transition(booking, 'start')}>Start session</button>}
+          {booking.status === 'in_progress' && <button type="button" disabled={busy} onClick={() => transition(booking, 'complete')}>Complete session</button>}
+          {booking.status === 'confirmed' && <button type="button" disabled={busy} onClick={() => { setPendingAction('no-show'); setReason('') }}>Mark no-show</button>}
+          {['confirmed', 'checked_in'].includes(booking.status) && <button type="button" disabled={busy} onClick={() => { setPendingAction('cancel'); setReason('') }}>Cancel reservation</button>}
+        </div>
+        {pendingAction && <form className="care-reason-form" onSubmit={recordReason}>
+          <label>{pendingAction === 'cancel' ? 'Cancellation reason' : 'No-show reason'}<textarea required rows={3} maxLength={500} value={reason} placeholder="Record why the booking status is changing…" onChange={event => setReason(event.target.value)} /></label>
+          <div><button type="button" disabled={busy} onClick={() => setPendingAction(null)}>Keep booking</button><button className="care-button-danger" disabled={busy || !reason.trim()} type="submit">{pendingAction === 'cancel' ? 'Confirm cancellation' : 'Confirm no-show'}</button></div>
+        </form>}
+        {booking.status === 'confirmed' && <form className="reschedule-form" onSubmit={event => { event.preventDefault(); reschedule(booking, start) }}>
+          <label>Reschedule session<input type="datetime-local" required value={start} onChange={event => setStart(event.target.value)} /></label>
+          <button className="primary" type="submit" disabled={busy || start === bookingDateTimeInput(booking.start)}><CalendarDays size={15} />Save new time</button>
+        </form>}
+        <h3>Booking activity</h3>
+        <div className="timeline" aria-label="Booking activity timeline">
+          {events.map(event => <div className="timeline-item" key={event.id}><i /><div><b>{statusLabel(event.event_type)}</b><small>{timeText(event.created_at)}</small>{event.reason && <p>{event.reason}</p>}</div></div>)}
+          {!events.length && <p className="empty">No booking activity to display.</p>}
+        </div>
+      </div>
+    </aside>
+  </div>
+}
 
 function CounterView({ drinks, orders, cart, setCart, cartItems, cartTotal, orderNote, setOrderNote, makeOrder, busy, transitionOrder }: { drinks: Item[]; orders: Order[]; cart: Record<string, number>; setCart: (value: Record<string, number>) => void; cartItems: Item[]; cartTotal: number; orderNote: string; setOrderNote: (value: string) => void; makeOrder: (event: FormEvent) => void; busy: boolean; transitionOrder: (id: string, action: string) => void }) { return <div className="counter-grid"><Pane title="Photobooth menu" extra={<span className="subtle">Prices in VND</span>}><div className="items-grid">{drinks.map(item => <button key={item.id} className="menu-tile selectable" onClick={() => setCart({ ...cart, [item.id]: Math.min(99, (cart[item.id] ?? 0) + 1) })}><div className="tile-icon drink"><Coffee size={22} /></div><b>{item.name}</b><small>{item.sku}</small><strong>{money(item.price_vnd)}</strong><span className="add-hint"><Plus size={13} /> Add</span></button>)}</div>{!drinks.length && <p className="empty">Add drinks in Operations setup to begin.</p>}</Pane><div className="stack"><Pane title="Current cart"><form className="form" onSubmit={makeOrder}>{cartItems.map(item => <div className="cart-line" key={item.id}><div><b>{item.name}</b><small>{money(item.price_vnd)}</small></div><div className="quantity"><button type="button" onClick={() => setCart({ ...cart, [item.id]: Math.max(0, (cart[item.id] ?? 0) - 1) })}>−</button><span>{cart[item.id]}</span><button type="button" onClick={() => setCart({ ...cart, [item.id]: Math.min(99, (cart[item.id] ?? 0) + 1) })}>+</button></div></div>)}{!cartItems.length && <p className="empty">Pick a drink to start an order.</p>}<div className="total"><span>Order total</span><b>{money(cartTotal)}</b></div><label>Order note<input value={orderNote} maxLength={300} onChange={event => setOrderNote(event.target.value)} placeholder="Table number or takeaway" /></label><button className="primary" disabled={!cartItems.length || busy}><Coffee size={17} />Create order</button></form></Pane><Pane title="Recent orders">{orders.map(order => <div className="record" key={order.id}><div><b>#{order.id.slice(0, 8)} · {money(order.total_vnd)}</b><small>{timeText(order.created_at)}</small></div>{order.status === 'open' ? <div className="row-actions"><button onClick={() => transitionOrder(order.id, 'serve')}>Serve</button><button onClick={() => transitionOrder(order.id, 'cancel')}>Cancel</button></div> : <Pill value={order.status} />}</div>)}</Pane></div></div> }
 
