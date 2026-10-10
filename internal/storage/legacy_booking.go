@@ -35,6 +35,25 @@ func (s *Store) LegacyBookings(ctx context.Context, workspace string) ([]domain.
 	return items, rows.Err()
 }
 
+func (s *Store) legacyBooking(ctx context.Context, workspace, id string) (domain.Booking, error) {
+	var item domain.Booking
+	err := s.DB.QueryRowContext(ctx, `SELECT b.id::text,b.booth_id::text,booth.name,b.package_id::text,
+ b.guest_name,b.package_name,b.start_at,b.end_at,b.status,b.price_vnd,b.created_at,b.updated_at
+ FROM cafe_bookings b JOIN cafe_booths booth ON booth.id=b.booth_id AND booth.workspace_id=b.workspace_id
+ WHERE b.workspace_id=$1 AND b.id=$2`, workspace, id).Scan(
+		&item.ID, &item.BoothID, &item.BoothName, &item.PackageID, &item.GuestName,
+		&item.PackageName, &item.Start, &item.End, &item.Status, &item.PriceVND,
+		&item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		return domain.Booking{}, MapError(err)
+	}
+	if item.Status == "reserved" {
+		item.Status = domain.BookingConfirmed
+	}
+	item.PartySize = 1
+	return item, nil
+}
+
 func (s *Store) LegacyReserve(ctx context.Context, workspace, actor string, input domain.BookingInput) (domain.Booking, error) {
 	input, err := input.Validate(time.Now().UTC())
 	if err != nil {
@@ -56,17 +75,7 @@ func (s *Store) LegacyReserve(ctx context.Context, workspace, actor string, inpu
 	if err != nil {
 		return domain.Booking{}, MapError(err)
 	}
-	items, err := s.LegacyBookings(ctx, workspace)
-	if err != nil {
-		return domain.Booking{}, err
-	}
-	for _, item := range items {
-		if item.ID == id {
-			return item, nil
-		}
-	}
-	// The INSERT is already committed; do not invite an automatic retry.
-	return domain.Booking{}, domain.ErrNotFound
+	return s.legacyBooking(ctx, workspace, id)
 }
 
 func (s *Store) LegacyTransition(ctx context.Context, workspace, id, action string) (domain.Booking, error) {
@@ -93,14 +102,5 @@ func (s *Store) LegacyTransition(ctx context.Context, workspace, id, action stri
 	if n, _ := result.RowsAffected(); n != 1 {
 		return domain.Booking{}, domain.ErrConflict
 	}
-	items, err := s.LegacyBookings(ctx, workspace)
-	if err != nil {
-		return domain.Booking{}, err
-	}
-	for _, item := range items {
-		if item.ID == id {
-			return item, nil
-		}
-	}
-	return domain.Booking{}, domain.ErrNotFound
+	return s.legacyBooking(ctx, workspace, id)
 }
