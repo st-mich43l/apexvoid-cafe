@@ -857,6 +857,23 @@ func (s *Store) Utilization(ctx context.Context, workspace string, from, to time
 	return map[string]any{"from": from, "to": to, "booths": out}, rows.Err()
 }
 
+// AdvancedBookingReady is evaluated per request so a running instance can
+// enable the new module immediately after Enterprise approves migration 002.
+// Legacy catalog, counter and booth endpoints remain usable until then.
+func (s *Store) AdvancedBookingReady(ctx context.Context) (bool, error) {
+	var ready bool
+	err := s.DB.QueryRowContext(ctx, `SELECT
+		to_regclass('cafe.cafe_booking_events') IS NOT NULL
+		AND to_regclass('cafe.cafe_booking_holds') IS NOT NULL
+		AND to_regclass('cafe.cafe_operating_schedules') IS NOT NULL
+		AND to_regclass('cafe.cafe_schedule_exceptions') IS NOT NULL
+		AND to_regclass('cafe.cafe_booth_blackouts') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM pg_attribute
+			WHERE attrelid=to_regclass('cafe.cafe_bookings')
+			  AND attname='booking_ref' AND NOT attisdropped)`).Scan(&ready)
+	return ready, MapError(err)
+}
+
 func ReadSchema(path string) (string, error) {
 	bytes, err := os.ReadFile(path)
 	return string(bytes), err
