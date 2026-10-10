@@ -30,9 +30,9 @@ func uuid(t *testing.T) string {
 }
 
 func TestBookingMigrationsAndConcurrency(t *testing.T) {
-	url := os.Getenv("APEXVOID_CAFE_TEST_DATABASE_URL")
+	url := os.Getenv("APEXVOID_PHOTOBOOTH_TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("set APEXVOID_CAFE_TEST_DATABASE_URL to a disposable PostgreSQL 16 test database")
+		t.Skip("set APEXVOID_PHOTOBOOTH_TEST_DATABASE_URL to a disposable PostgreSQL 16 test database")
 	}
 	ctx := context.Background()
 	db, err := sql.Open("pgx", url)
@@ -45,13 +45,13 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT current_database()").Scan(&dbName); err != nil {
 		t.Fatal(err)
 	}
-	if dbName != "apexvoid_cafe_test" {
-		t.Fatalf("refusing schema destructive test outside apexvoid_cafe_test: %s", dbName)
+	if dbName != "apexvoid_photobooth_test" {
+		t.Fatalf("refusing schema destructive test outside apexvoid_photobooth_test: %s", dbName)
 	}
-	if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS cafe CASCADE; CREATE SCHEMA cafe;"); err != nil {
+	if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS photobooth CASCADE; CREATE SCHEMA photobooth;"); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _, _ = db.ExecContext(context.Background(), "DROP SCHEMA IF EXISTS cafe CASCADE") }()
+	defer func() { _, _ = db.ExecContext(context.Background(), "DROP SCHEMA IF EXISTS photobooth CASCADE") }()
 	apply := func(name string) {
 		t.Helper()
 		sqlBytes, err := os.ReadFile("../../db/migrations/" + name)
@@ -62,17 +62,17 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 			t.Fatalf("apply migration %s: %v", name, err)
 		}
 	}
-	apply("001_cafe.sql")
+	apply("001_photobooth.sql")
 	store := storage.New(db)
 	ready, err := store.AdvancedBookingReady(ctx)
 	if err != nil || ready {
 		t.Fatalf("Phase 2 unexpectedly enabled before migration 002: ready=%v err=%v", ready, err)
 	}
 	workspace, actor, booth, item := uuid(t), uuid(t), uuid(t), uuid(t)
-	if _, err := db.ExecContext(ctx, "INSERT INTO cafe.cafe_booths(id,workspace_id,name,created_by) VALUES($1,$2,'Studio A',$3)", booth, workspace, actor); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO photobooth.photobooth_booths(id,workspace_id,name,created_by) VALUES($1,$2,'Studio A',$3)", booth, workspace, actor); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "INSERT INTO cafe.cafe_items(id,workspace_id,sku,name,kind,price_vnd,created_by) VALUES($1,$2,'PHOTO-A','Photo Session','photo',100000,$3)", item, workspace, actor); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO photobooth.photobooth_items(id,workspace_id,sku,name,kind,price_vnd,created_by) VALUES($1,$2,'PHOTO-A','Photo Session','photo',100000,$3)", item, workspace, actor); err != nil {
 		t.Fatal(err)
 	}
 	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
@@ -81,10 +81,10 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	}
 	start := time.Date(time.Now().In(loc).Year(), time.Now().In(loc).Month(), time.Now().In(loc).Day(), 13, 0, 0, 0, loc).AddDate(0, 0, 2)
 	legacyID := uuid(t)
-	if _, err := db.ExecContext(ctx, "INSERT INTO cafe.cafe_bookings(id,workspace_id,booth_id,package_id,guest_name,start_at,end_at,package_name,price_vnd,created_by) VALUES($1,$2,$3,$4,'Legacy',$5,$6,'Photo Session',100000,$7)", legacyID, workspace, booth, item, start, start.Add(20*time.Minute), actor); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO photobooth.photobooth_bookings(id,workspace_id,booth_id,package_id,guest_name,start_at,end_at,package_name,price_vnd,created_by) VALUES($1,$2,$3,$4,'Legacy',$5,$6,'Photo Session',100000,$7)", legacyID, workspace, booth, item, start, start.Add(20*time.Minute), actor); err != nil {
 		t.Fatal(err)
 	}
-	// The staged Café image must continue operating with migration 001.
+	// The staged Photobooth image must continue operating with migration 001.
 	legacyItems, err := store.Items(ctx, workspace)
 	if err != nil || len(legacyItems) != 1 || legacyItems[0].DurationMinutes != 20 {
 		t.Fatalf("legacy menu availability: %+v %v", legacyItems, err)
@@ -106,10 +106,10 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 		t.Fatalf("Phase 2 failed to activate after approved schema: ready=%v err=%v", ready, err)
 	}
 	var ref, status string
-	if err := db.QueryRowContext(ctx, "SELECT booking_ref,status FROM cafe.cafe_bookings WHERE id=$1", legacyID).Scan(&ref, &status); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT booking_ref,status FROM photobooth.photobooth_bookings WHERE id=$1", legacyID).Scan(&ref, &status); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(ref, "CAF-") || status != "confirmed" {
+	if !strings.HasPrefix(ref, "PBT-") || status != "confirmed" {
 		t.Fatalf("legacy backfill failed: %q %q", ref, status)
 	}
 	// A generated reference and the upgraded status default must be present
@@ -117,7 +117,7 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	future := start.Add(90 * time.Minute)
 	input := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "First", PartySize: 2, Start: future, End: future.Add(20 * time.Minute)}
 	created, err := store.CreateBooking(ctx, workspace, actor, input)
-	if err != nil || !strings.HasPrefix(created.BookingRef, "CAF-") || created.Status != "confirmed" {
+	if err != nil || !strings.HasPrefix(created.BookingRef, "PBT-") || created.Status != "confirmed" {
 		t.Fatalf("new booking: %+v %v", created, err)
 	}
 	// Concurrent writers must serialize at the database trigger, not just
@@ -174,7 +174,7 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 		t.Fatalf("accepted idempotency key reused for a different guest: %v", err)
 	}
 	weekday := int(start.Weekday())
-	if _, err := db.ExecContext(ctx, "INSERT INTO cafe.cafe_operating_schedules(workspace_id,weekday,buffer_before_minutes,buffer_after_minutes,created_by) VALUES($1,$2,10,10,$3)", workspace, weekday, actor); err != nil {
+	if _, err := db.ExecContext(ctx, "INSERT INTO photobooth.photobooth_operating_schedules(workspace_id,weekday,buffer_before_minutes,buffer_after_minutes,created_by) VALUES($1,$2,10,10,$3)", workspace, weekday, actor); err != nil {
 		t.Fatal(err)
 	}
 	holdStart := start.Add(4 * time.Hour)

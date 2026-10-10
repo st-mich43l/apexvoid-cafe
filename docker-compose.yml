@@ -1,5 +1,5 @@
 services:
-  cafe:
+  photobooth:
     build: .
     restart: unless-stopped
     environment:
@@ -8,17 +8,17 @@ services:
       DATABASE_PORT: ${DATABASE_PORT:-5432}
       DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
       BOOTSTRAP_STATE_DIR: /var/lib/apexvoid/bootstrap
-      SERVICE_URL: ${SERVICE_URL:-http://cafe:8090}
+      SERVICE_URL: ${SERVICE_URL:-http://photobooth:8090}
     volumes:
-      - cafe-bootstrap-state:/var/lib/apexvoid/bootstrap
+      - photobooth-bootstrap-state:/var/lib/apexvoid/bootstrap
     networks:
       apexvoid-apps:
-        aliases: [cafe]
+        aliases: [photobooth]
       apexvoid-data: {}
     # Intentionally NO host ports: all user access is through Enterprise.
 
 volumes:
-  cafe-bootstrap-state:
+  photobooth-bootstrap-state:
 
 networks:
   apexvoid-apps:

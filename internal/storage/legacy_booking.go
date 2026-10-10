@@ -14,7 +14,7 @@ import (
 func (s *Store) LegacyBookings(ctx context.Context, workspace string) ([]domain.Booking, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT b.id::text,b.booth_id::text,booth.name,b.package_id::text,
  b.guest_name,b.package_name,b.start_at,b.end_at,b.status,b.price_vnd,b.created_at,b.updated_at
- FROM cafe_bookings b JOIN cafe_booths booth ON booth.id=b.booth_id AND booth.workspace_id=b.workspace_id
+ FROM photobooth_bookings b JOIN photobooth_booths booth ON booth.id=b.booth_id AND booth.workspace_id=b.workspace_id
  WHERE b.workspace_id=$1 ORDER BY b.start_at DESC LIMIT 100`, workspace)
 	if err != nil {
 		return nil, MapError(err)
@@ -39,7 +39,7 @@ func (s *Store) legacyBooking(ctx context.Context, workspace, id string) (domain
 	var item domain.Booking
 	err := s.DB.QueryRowContext(ctx, `SELECT b.id::text,b.booth_id::text,booth.name,b.package_id::text,
  b.guest_name,b.package_name,b.start_at,b.end_at,b.status,b.price_vnd,b.created_at,b.updated_at
- FROM cafe_bookings b JOIN cafe_booths booth ON booth.id=b.booth_id AND booth.workspace_id=b.workspace_id
+ FROM photobooth_bookings b JOIN photobooth_booths booth ON booth.id=b.booth_id AND booth.workspace_id=b.workspace_id
  WHERE b.workspace_id=$1 AND b.id=$2`, workspace, id).Scan(
 		&item.ID, &item.BoothID, &item.BoothName, &item.PackageID, &item.GuestName,
 		&item.PackageName, &item.Start, &item.End, &item.Status, &item.PriceVND,
@@ -64,9 +64,9 @@ func (s *Store) LegacyReserve(ctx context.Context, workspace, actor string, inpu
 		return domain.Booking{}, domain.ErrInvalid
 	}
 	var id string
-	err = s.DB.QueryRowContext(ctx, `INSERT INTO cafe_bookings(workspace_id,booth_id,package_id,guest_name,start_at,end_at,package_name,price_vnd,created_by)
+	err = s.DB.QueryRowContext(ctx, `INSERT INTO photobooth_bookings(workspace_id,booth_id,package_id,guest_name,start_at,end_at,package_name,price_vnd,created_by)
  SELECT $1,booth.id,item.id,$4,$5,$6,item.name,item.price_vnd,$7
- FROM cafe_booths booth JOIN cafe_items item ON item.workspace_id=booth.workspace_id
+ FROM photobooth_booths booth JOIN photobooth_items item ON item.workspace_id=booth.workspace_id
  WHERE booth.workspace_id=$1 AND booth.id=$2 AND booth.active AND item.id=$3 AND item.active AND item.kind='photo'
  RETURNING id::text`, workspace, input.BoothID, input.PackageID, input.GuestName, input.Start, input.End, actor).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -93,7 +93,7 @@ func (s *Store) LegacyTransition(ctx context.Context, workspace, id, action stri
 	default:
 		return domain.Booking{}, domain.ErrInvalid
 	}
-	result, err := s.DB.ExecContext(ctx, `UPDATE cafe_bookings SET status=$3,updated_at=now()
+	result, err := s.DB.ExecContext(ctx, `UPDATE photobooth_bookings SET status=$3,updated_at=now()
  WHERE workspace_id=$1 AND id=$2 AND status=$4
  AND ($5::boolean=FALSE OR (start_at <= now()+interval '10 minutes' AND end_at>now()))`, workspace, id, to, from, action == "check-in")
 	if err != nil {

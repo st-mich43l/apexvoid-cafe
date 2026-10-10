@@ -27,7 +27,7 @@ func main() {
 		DatabasePort:     envInt("DATABASE_PORT", 5432),
 		DatabaseSSLMode:  env("DATABASE_SSLMODE", "disable"),
 		PlatformURL:      env("APEXVOID_URL", "http://backend:6868"),
-		ServiceURL:       env("SERVICE_URL", "http://cafe:8090"),
+		ServiceURL:       env("SERVICE_URL", "http://photobooth:8090"),
 	}
 	manager, firstStart, err := bootstrap.New(config)
 	if err != nil {
@@ -35,7 +35,7 @@ func main() {
 	}
 	if firstStart {
 		log.Printf("ApexVoid Photobooth registration pending")
-		log.Printf("Application: cafe")
+		log.Printf("Application: photobooth")
 		log.Printf("Service URL: %s", config.ServiceURL)
 		log.Printf("Manifest: %s/.well-known/apexvoid/manifest.json", config.ServiceURL)
 		log.Printf("One-time enrollment code: %s", manager.SetupCodeForOperator())

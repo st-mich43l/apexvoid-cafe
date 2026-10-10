@@ -13,8 +13,8 @@ import (
 
 func TestManifestIsSignedFromPublishedMigrationBytes(t *testing.T) {
 	dir := t.TempDir()
-	migration := []byte("CREATE TABLE cafe.example (id integer PRIMARY KEY);\n")
-	path := filepath.Join(dir, "001_cafe.sql")
+	migration := []byte("CREATE TABLE photobooth.example (id integer PRIMARY KEY);\n")
+	path := filepath.Join(dir, "001_photobooth.sql")
 	if err := os.WriteFile(path, migration, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +48,10 @@ func TestManifestIsSignedFromPublishedMigrationBytes(t *testing.T) {
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Application.ID != "cafe" || decoded.Application.Version != "0.2.0" || decoded.Database.Name != "apexvoid_cafe" || decoded.Database.Schema != "cafe" || decoded.Database.Role != "apexvoid_cafe" || len(decoded.Migrations) != 1 {
+	if decoded.Application.ID != "photobooth" || decoded.Application.Version != "0.2.0" || decoded.Database.Name != "apexvoid_photobooth" || decoded.Database.Schema != "photobooth" || decoded.Database.Role != "apexvoid_photobooth" || len(decoded.Migrations) != 1 {
 		t.Fatalf("unexpected manifest: %s", body)
 	}
-	if decoded.Migrations[0].Path != "/.well-known/apexvoid/migrations/001_cafe.sql" || decoded.Migrations[0].SHA256 == "" {
+	if decoded.Migrations[0].Path != "/.well-known/apexvoid/migrations/001_photobooth.sql" || decoded.Migrations[0].SHA256 == "" {
 		t.Fatalf("migration is not pinned: %s", body)
 	}
 
@@ -72,7 +72,7 @@ func TestManifestDiscoversOrderedMigrationBundle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "002_advanced_booking.sql"), []byte("second"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "001_cafe.sql"), []byte("first"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "001_photobooth.sql"), []byte("first"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m, _, err := New(Config{StateDir: filepath.Join(dir, "state"), MigrationDir: dir, AppVersion: "0.2.0", MigrationVersion: "0.2.0"})
