@@ -141,10 +141,9 @@ export function App() {
     setAvailabilityError(null)
     setReservation(current => current.slot ? { ...current, slot: '' } : current)
     if (!reservation.booth_id || !reservation.package_id) { setAvailabilityLoading(false); return () => { active = false } }
-    const date = new Date(selectedDate)
-    date.setHours(12, 0, 0, 0)
+    const availabilityDate = `${dateKey(selectedDate)}T12:00:00+07:00`
     setAvailabilityLoading(true)
-    void api<{ slots: { start: string; end: string }[] }>(`/bookings/availability?booth_id=${encodeURIComponent(reservation.booth_id)}&package_id=${encodeURIComponent(reservation.package_id)}&date=${encodeURIComponent(date.toISOString())}`)
+    void api<{ slots: { start: string; end: string }[] }>(`/bookings/availability?booth_id=${encodeURIComponent(reservation.booth_id)}&package_id=${encodeURIComponent(reservation.package_id)}&date=${encodeURIComponent(availabilityDate)}`)
       .then(value => { if (!active) return; setSlots(value.slots); setAvailabilityError(null) })
       .catch(cause => { if (!active) return; setSlots([]); setAvailabilityError(cause instanceof Error ? cause.message : 'Unable to load availability.') })
       .finally(() => { if (active) setAvailabilityLoading(false) })
