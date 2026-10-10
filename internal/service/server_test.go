@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
-	"github.com/st-mich43l/apexvoid-cafe/internal/platform"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/domain"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/platform"
 )
 
 const userID = "123e4567-e89b-42d3-a456-426614174000"

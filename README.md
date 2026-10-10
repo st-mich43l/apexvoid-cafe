@@ -1,6 +1,10 @@
-# ApexVoid Café & Photo Booth
+# ApexVoid Photobooth
 
-A **standalone business application** for a café combined with a self-service photo-booth venue. This is **not part of the `apexvoid-enterprise` source tree**. Deploy it in its own Docker stack and register it as an **external application** inside ApexVoid Enterprise.
+A **standalone business application** for self-service photo-booth reservations and venue operations, with an optional café counter. This is **not part of the `apexvoid-enterprise` source tree**. Deploy it in its own Docker stack and register it as an **external application** inside ApexVoid Enterprise.
+
+## Project declaration
+
+**ApexVoid Photobooth** is the product and repository identity. It manages photo-booth packages, booths, reservations, guest flow, operating schedules, and an optional café counter from an Enterprise-connected workspace. The existing `cafe` application ID, gateway routes, permission namespace, PostgreSQL database/schema, and migration filenames are retained as compatibility contracts for already-enrolled Enterprise installations; they are implementation identifiers, not the product name.
 
 **Stack:** Go 1.25 · React 19 / TypeScript / Vite · Enterprise-provisioned PostgreSQL 16 · Docker Compose.
 
@@ -19,7 +23,7 @@ Browser (signed in to ApexVoid Enterprise)
 
 The business app does **not** store Enterprise user passwords, sessions, user-role assignments, or copies of Enterprise's database. All workspace IDs and actors originate in operation-specific Enterprise introspection decisions. The Go API port is not published to the host; access is through the gateway only. Enterprise issues the assertion and enforces the registered application's availability and entry policy.
 
-The Café service has no PostgreSQL container and never creates databases, roles, schemas, extensions, or tables at runtime. Enterprise provisions the canonical `apexvoid_cafe` database, `cafe` schema, and restricted `apexvoid_cafe` role during approved enrollment, applies this repository's signed migration bundle, then sends the encrypted credentials to the Café service.
+The Photobooth service has no PostgreSQL container and never creates databases, roles, schemas, extensions, or tables at runtime. Enterprise provisions the canonical `apexvoid_cafe` database, `cafe` schema, and restricted `apexvoid_cafe` role during approved enrollment, applies this repository's signed migration bundle, then sends the encrypted credentials to the Photobooth service.
 
 **Important catalog boundary:** Enterprise's built-in ERP catalog is not directly accessible through the external integration v1 business-data API. This app therefore owns its initial *café-specific menu* and *photo package catalog*. Syncing orders with ERP accounting/inventory requires future explicit, authorized service-to-service business APIs; do **not** access the Enterprise PostgreSQL tables.
 
@@ -35,7 +39,7 @@ Phase 2 extends the original photo-booth proof of concept with:
 
 ## Implemented MVP
 
-- **Café counter:** configure drinks, create multi-line orders, exact integer VND totals, track open/served/cancelled. Order line prices are snapshotted transactionally from the owned catalog.
+- **Photobooth counter:** configure drinks, create multi-line orders, exact integer VND totals, track open/served/cancelled. Order line prices are snapshotted transactionally from the owned catalog.
 - **Photo booths:** configure shooting stations, create timed sessions using configured photo packages, check in, start, complete, cancel, or mark bookings as no-shows.
 - **No double-booking:** PostgreSQL transaction-scoped advisory locks plus schema triggers reject overlapping buffered bookings and active holds, even during concurrent requests. Cancelled, completed and no-show slots are excluded; adjacent time intervals are allowed.
 - **Unified interface:** responsive React UI with light/dark toggle, order dashboard, POS counter, booth calendar list, and menu setup.
@@ -45,7 +49,7 @@ Phase 2 extends the original photo-booth proof of concept with:
 
 ## Getting started — 2 separate repositories
 
-1. Create an empty GitHub repository named **`apexvoid-cafe`**. Nothing needs to be copied into the Enterprise source tree.
+1. Create an empty GitHub repository named **`apexvoid-photobooth`**. Nothing needs to be copied into the Enterprise source tree.
 2. In the Enterprise environment create the two shared networks once:
 
    ```bash
@@ -54,7 +58,7 @@ Phase 2 extends the original photo-booth proof of concept with:
    ```
 
 3. Give Enterprise's **backend** access to both networks and **postgres** access to `apexvoid-data`. Compose the Enterprise stack with `deploy/enterprise-network.override.yml` supplied in this project. Set a unique, long `INTEGRATIONS_ASSERTION_SECRET`, a trusted `DATABASE_PROVISIONING_URL` using the Docker hostname `postgres` (not `localhost`), and a stable 32+ character `DATABASE_PROVISIONING_KEY`; ensure `INTEGRATIONS_ALLOWED_SERVICE_HOSTS` includes `cafe` (and preserve other already-allowed hosts if configured). For a fresh local Enterprise PostgreSQL volume, set `DATABASE_PROVISIONER_PASSWORD`; Enterprise's init script creates the restricted `apexvoid_provisioner` administrator required for approved database provisioning.
-4. In this project, copy `.env.example` to `.env` and start the independent Café service:
+4. In this project, copy `.env.example` to `.env` and start the independent Photobooth service:
 
    ```bash
    cp .env.example .env
@@ -62,8 +66,8 @@ Phase 2 extends the original photo-booth proof of concept with:
    ```
 
    On first start, Docker logs show the service URL, manifest URL, and one high-entropy one-time enrollment code. The persistent `cafe-bootstrap-state` volume stores this state with restrictive permissions. No database password or permanent service credential is printed.
-5. Sign in to Enterprise as a platform administrator and open **Applications → Register application**. Enter the Café service URL and one-time enrollment code in the registration popup. Enterprise discovers the signed manifest, previews permissions and migrations, provisions the shared PostgreSQL database/schema/role, applies the migration, encrypts the credentials, and completes enrollment automatically. Approve all requested registration, permissions, database, schema, and migration operations.
-6. After enrollment, the Café logs show only a concise activation/verification status. Restarting the service reuses the persisted protected enrollment state and verifies the shared database; it does not print the code again.
+5. Sign in to Enterprise as a platform administrator and open **Applications → Register application**. Enter the Photobooth service URL and one-time enrollment code in the registration popup. Enterprise discovers the signed manifest, previews permissions and migrations, provisions the shared PostgreSQL database/schema/role, applies the migration, encrypts the credentials, and completes enrollment automatically. Approve all requested registration, permissions, database, schema, and migration operations.
+6. After enrollment, the Photobooth logs show only a concise activation/verification status. Restarting the service reuses the persisted protected enrollment state and verifies the shared database; it does not print the code again.
 7. Enable the application for the target workspace via Enterprise application management. Assign staff the appropriate `cafe.*` workspace permissions. Browse to **`/apps/cafe/` on the Enterprise origin**. Frontend requests use `/api/apps/cafe/v1/...`; no second login is required.
 
    Example of workspace availability API, for an Enterprise admin:
@@ -79,7 +83,7 @@ Phase 2 extends the original photo-booth proof of concept with:
 
 Registration is driven by the signed `/.well-known/apexvoid/manifest.json` and the encrypted `/.well-known/apexvoid/enroll` exchange. The old [`deploy/enterprise-registration.json`](deploy/enterprise-registration.json) file is retained only as a historical reference and is not an installation input. Contract is strictly `api_contract_version=v1`.
 
-The current Enterprise master decoder strictly accepts permission entries using its Go wire names (`Name`, `DisplayName`, `Description`, `Scope`); Café emits those exact keys so discovery succeeds without an Enterprise source change.
+The current Enterprise master decoder strictly accepts permission entries using its Go wire names (`Name`, `DisplayName`, `Description`, `Scope`); Photobooth emits those exact keys so discovery succeeds without an Enterprise source change.
 
 | Permission | Purpose |
 |---|---|
@@ -112,9 +116,9 @@ For local testing, only the domain, gateway-client and HTTP authorization tests 
 go test ./internal/domain ./internal/platform ./internal/service
 ```
 
-The Go image build downloads `pgx/v5` and the public Enterprise integration SDK; the frontend image build downloads npm dependencies. Enterprise owns the migration ledger and applies versions 1 and 2 in order in a transaction guarded by an advisory lock. The Café publishes every immutable SQL artifact under `/.well-known/apexvoid/migrations/` and only verifies the expected database identity/schema after the approved upgrade is applied. Any future schema changes should use a new migration version, not edit an applied SQL file. Existing legacy `cafe-db-data` volumes are not removed automatically; back them up and migrate deliberately before deleting them.
+The Go image build downloads `pgx/v5` and the public Enterprise integration SDK; the frontend image build downloads npm dependencies. Enterprise owns the migration ledger and applies versions 1 and 2 in order in a transaction guarded by an advisory lock. The Photobooth publishes every immutable SQL artifact under `/.well-known/apexvoid/migrations/` and only verifies the expected database identity/schema after the approved upgrade is applied. Any future schema changes should use a new migration version, not edit an applied SQL file. Existing legacy `cafe-db-data` volumes are not removed automatically; back them up and migrate deliberately before deleting them.
 
-For a staged Phase 2 release, deploy the new Café image first. The original schema remains sufficient for service activation. The existing menu, counter, booth and legacy reservation endpoints stay operational through a Phase 1-compatible storage path; new scheduling, holds, availability and advanced booking operations return `SCHEMA_UPGRADE_REQUIRED` until Enterprise approves and applies `002_advanced_booking.sql`. The new calendar/form UI depends on advanced availability, so arrange prompt approval or retain access to the previous booking UI during the rollout window. The container never creates another database or self-applies migrations. Once approved, the same running service begins serving Phase 2 operations.
+For a staged Phase 2 release, deploy the new Photobooth image first. The original schema remains sufficient for service activation. The existing menu, counter, booth and legacy reservation endpoints stay operational through a Phase 1-compatible storage path; new scheduling, holds, availability and advanced booking operations return `SCHEMA_UPGRADE_REQUIRED` until Enterprise approves and applies `002_advanced_booking.sql`. The new calendar/form UI depends on advanced availability, so arrange prompt approval or retain access to the previous booking UI during the rollout window. The container never creates another database or self-applies migrations. Once approved, the same running service begins serving Phase 2 operations.
 
 **Do not publish port 8090 directly** while using the Enterprise assertion-based trust model. There is no stand-alone login for direct access; the Enterprise gateway is required.
 
@@ -124,8 +128,8 @@ This is a **staff-operated proof of concept** for combining a café and self-pho
 
 ## Phase 1 Enterprise application lifecycle compatibility
 
-Café now supports the Enterprise **reviewed application upgrade** manifest
-challenge. An enrolled Café service answers
+Photobooth now supports the Enterprise **reviewed application upgrade** manifest
+challenge. An enrolled Photobooth service answers
 `GET /.well-known/apexvoid/manifest.json` with the exact JSON manifest and
 `X-ApexVoid-Update-Signature` only when Enterprise supplies a fresh
 `X-ApexVoid-Update-Challenge` header. Signature input is the existing
@@ -136,10 +140,10 @@ The old signed enrollment response remains available for initial registration.
 
 The Enterprise application gateway now uses full-page /apps/cafe/ navigation,
 not an iframe. A selected workspace is passed on the initial app launch and
-resolved against the current user's membership. Café includes that selection
+resolved against the current user's membership. Photobooth includes that selection
 in its API headers, so orders and bookings remain bound to the same workspace.
 
-To introduce a later Café schema or permission upgrade: append a **new**
+To introduce a later Photobooth schema or permission upgrade: append a **new**
 numbered SQL migration, increment the stable application version and, when SQL
 changes, its migration bundle version. Keep all previously published migration
 versions, paths and checksums identical, and do not change application database
@@ -151,4 +155,4 @@ existing schema until approval finishes. POS integration is not in scope.
 
 GitHub CI now runs `go test -tags=integration ./tests/integration` against a disposable PostgreSQL 16 database. The test applies the original and new migrations in order, checks historical booking backfills and generated references, verifies legacy read/write behavior while approval is pending, and exercises concurrent bookings, hold buffers, idempotent confirmation and rescheduling rollback.
 
-A separate Enterprise fix is required before applying migration 002: the Enterprise migration safety filter must accept ordinary `UPDATE ... SET` data backfills without allowing privilege/session changes. Apply Enterprise PR #40 (or its merged equivalent) before approving this Café schema upgrade. The migration bundle version is `0.2.0` (semantic version), while SQL migration numbers are the integers 1 and 2.
+A separate Enterprise fix is required before applying migration 002: the Enterprise migration safety filter must accept ordinary `UPDATE ... SET` data backfills without allowing privilege/session changes. Apply Enterprise PR #40 (or its merged equivalent) before approving this Photobooth schema upgrade. The migration bundle version is `0.2.0` (semantic version), while SQL migration numbers are the integers 1 and 2.

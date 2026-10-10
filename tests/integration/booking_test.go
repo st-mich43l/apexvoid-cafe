@@ -14,8 +14,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
-	"github.com/st-mich43l/apexvoid-cafe/internal/storage"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/domain"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/storage"
 )
 
 func uuid(t *testing.T) string {

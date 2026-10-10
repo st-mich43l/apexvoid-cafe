@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/st-mich43l/apexvoid-cafe/internal/bootstrap"
-	"github.com/st-mich43l/apexvoid-cafe/internal/service"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/bootstrap"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/service"
 )
 
 func main() {
@@ -34,14 +34,14 @@ func main() {
 		log.Fatalf("bootstrap initialization failed: %v", err)
 	}
 	if firstStart {
-		log.Printf("ApexVoid Café registration pending")
+		log.Printf("ApexVoid Photobooth registration pending")
 		log.Printf("Application: cafe")
 		log.Printf("Service URL: %s", config.ServiceURL)
 		log.Printf("Manifest: %s/.well-known/apexvoid/manifest.json", config.ServiceURL)
 		log.Printf("One-time enrollment code: %s", manager.SetupCodeForOperator())
 		log.Printf("Keep this code private; it is required by Enterprise registration")
 	} else if manager.Phase() == "ACTIVE" {
-		log.Printf("ApexVoid Café enrollment state loaded; verifying shared database")
+		log.Printf("ApexVoid Photobooth enrollment state loaded; verifying shared database")
 	}
 
 	app := service.New(nil, nil, env("WEB_DIST", "web/dist"))
@@ -61,7 +61,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	log.Printf("ApexVoid Café listening on %s", server.Addr)
+	log.Printf("ApexVoid Photobooth listening on %s", server.Addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}

@@ -22,8 +22,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/st-mich43l/apexvoid-CRM/integration"
-	"github.com/st-mich43l/apexvoid-cafe/internal/platform"
-	"github.com/st-mich43l/apexvoid-cafe/internal/storage"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/platform"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/storage"
 )
 
 const (
@@ -308,7 +308,7 @@ func buildManifest(config Config, migrations []publishedMigration) ([]byte, stri
 	}
 	m := manifest{
 		ManifestVersion: manifestVersion,
-		Application:     manifestApplication{ID: applicationID, DisplayName: "ApexVoid Café", Description: "Coffee counter and photo booth booking", Version: config.AppVersion, APIContractVersion: contractVersion},
+		Application:     manifestApplication{ID: applicationID, DisplayName: "ApexVoid Photobooth", Description: "Photo-booth booking and venue operations with an optional café counter", Version: config.AppVersion, APIContractVersion: contractVersion},
 		Service:         manifestService{Identity: "cafe-service", HealthPath: "/health", EnrollmentPath: "/.well-known/apexvoid/enroll", FrontendRoute: "/apps/cafe", APIRoute: "/api"},
 		Database:        manifestDatabase{Name: "apexvoid_cafe", Schema: "cafe", Role: "apexvoid_cafe", MigrationBundleVersion: config.MigrationVersion},
 		Permissions: []manifestPermission{
@@ -320,7 +320,7 @@ func buildManifest(config Config, migrations []publishedMigration) ([]byte, stri
 			{Name: "cafe.booking.manage", DisplayName: "Manage Photo Booth Bookings", Description: "Reserve and manage photo booth sessions", Scope: "workspace"},
 			{Name: "cafe.booking.history.read", DisplayName: "View Booking History", Description: "View immutable booking activity history", Scope: "workspace"},
 			{Name: "cafe.booking.schedule.manage", DisplayName: "Manage Booking Schedule", Description: "Configure opening hours and booth blackouts", Scope: "workspace"},
-			{Name: "cafe.booth.manage", DisplayName: "Configure Photo Booths", Description: "Configure café photo booths", Scope: "workspace"},
+			{Name: "cafe.booth.manage", DisplayName: "Configure Photo Booths", Description: "Configure photo-booth stations", Scope: "workspace"},
 		},
 		Access:     manifestAccess{Match: "any", Permissions: []string{"cafe.catalog.read", "cafe.order.read", "cafe.booking.read", "cafe.booking.history.read", "cafe.booking.schedule.manage"}},
 		Migrations: manifestMigrations,
@@ -398,7 +398,7 @@ func (m *Manager) connectLoop(ctx context.Context) {
 			return
 		}
 		if err := m.activateStored(ctx); err != nil {
-			log.Printf("café database verification pending (phase=%s)", m.Phase())
+			log.Printf("Photobooth database verification pending (phase=%s)", m.Phase())
 		}
 		timer := time.NewTimer(2 * time.Second)
 		select {
@@ -467,7 +467,7 @@ func (m *Manager) Enroll(ctx context.Context, payload []byte, challenge string) 
 			return "", errors.New("could not finalize enrollment state")
 		}
 	}
-	log.Printf("ApexVoid Café enrollment complete; shared database verified")
+	log.Printf("ApexVoid Photobooth enrollment complete; shared database verified")
 	return integration.SignEnrollmentAcknowledgement(credential, challenge)
 }
 

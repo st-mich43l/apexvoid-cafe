@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/domain"
 )
 
 type Store struct{ DB *sql.DB }
