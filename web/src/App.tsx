@@ -78,6 +78,8 @@ export function App() {
   const [booths, setBooths] = useState<Booth[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [historyPage, setHistoryPage] = useState(1)
+  const [careRefreshKey, setCareRefreshKey] = useState(0)
+  const selectionRequest = useRef(0)
   const [bookingHistory, setBookingHistory] = useState<Page<Booking>>({ items: [], page: 1, page_size: 50, total: 0, has_more: false })
   const [schedules, setSchedules] = useState<Schedule[]>([])
   const [blackouts, setBlackouts] = useState<Blackout[]>([])
@@ -138,22 +140,36 @@ export function App() {
   }, [fetchCalendarBookings, historyPage])
   const searchGuestBookings = useCallback((guest: string, status: string, page: number) =>
     api<Page<Booking>>(`/bookings?guest=${encodeURIComponent(guest)}&status=${encodeURIComponent(status)}&page=${page}&page_size=20`), [])
+  const loadTodayBookings = useCallback(async () => {
+    // Never infer the venue's day from the browser timezone.
+    const today = bookingDateTimeInput(new Date().toISOString()).slice(0, 10)
+    const from = vietnamLocalToISO(`${today}T00:00`)
+    const next = new Date(from)
+    next.setUTCDate(next.getUTCDate() + 1)
+    const to = next.toISOString()
+    const items: Booking[] = []
+    for (let page = 1; page <= 50; page++) {
+      const result = await api<Page<Booking>>(`/bookings?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&page=${page}&page_size=200`)
+      items.push(...result.items.filter(item => bookingDateTimeInput(item.start).slice(0, 10) === today))
+      if (!result.has_more) return items
+    }
+    throw new Error('Too many reservations to load at once; contact an administrator.')
+  }, [])
   const loadOperations = useCallback(async () => { const results = await Promise.allSettled([api<Schedule[]>('/schedules'), api<Blackout[]>('/blackouts')]); if (results[0].status === 'fulfilled') setSchedules(results[0].value); if (results[1].status === 'fulfilled') setBlackouts(results[1].value) }, [])
   const loadEvents = useCallback(async (booking: Booking) => {
+    const request = ++selectionRequest.current
     setSelectedBooking(booking)
     setEvents([])
-    // Always load the live record; the calendar and guest-care results may
-    // have been fetched before a different staff member updated this booking.
+    // Load the latest status even when the calendar/search result is stale.
     const [current, timeline] = await Promise.allSettled([
       api<Booking>(`/bookings/${booking.id}`),
       api<BookingEvent[]>(`/bookings/${booking.id}/events`),
     ])
+    if (request !== selectionRequest.current) return
     if (current.status === 'fulfilled') {
       setSelectedBooking(selected => selected?.id === booking.id ? current.value : selected)
     }
-    if (timeline.status === 'fulfilled') {
-      setEvents(events => timeline.status === 'fulfilled' ? timeline.value : events)
-    }
+    setEvents(timeline.status === 'fulfilled' ? timeline.value : [])
   }, [])
 
   useEffect(() => { void loadContext(); void load(); void loadOperations() }, [loadContext, load, loadOperations])
@@ -174,7 +190,7 @@ export function App() {
     return () => { active = false }
   }, [reservation.booth_id, reservation.package_id, selectedDate])
 
-  async function mutate<T>(job: () => Promise<T>, success: string, after?: (result: T) => void) { setBusy(true); setError(null); setNotice(null); try { const result = await job(); setNotice(success); after?.(result); await load(); await loadOperations() } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed') } finally { setBusy(false) } }
+  async function mutate<T>(job: () => Promise<T>, success: string, after?: (result: T) => void) { setBusy(true); setError(null); setNotice(null); try { const result = await job(); setNotice(success); after?.(result); await load(); await loadOperations(); setCareRefreshKey(current => current + 1) } catch (cause) { setError(cause instanceof Error ? cause.message : 'Request failed') } finally { setBusy(false) } }
   function navigate(next: Tab) { setNotice(null); setError(null); setTab(next) }
   function makeOrder(event: FormEvent) { event.preventDefault(); if (!cartItems.length) return; void mutate(() => api('/orders', { body: { note: orderNote, lines: cartItems.map(item => ({ item_id: item.id, quantity: cart[item.id] })) } }), 'Order opened.', () => { setCart({}); setOrderNote('') }) }
   function addItem(event: FormEvent) { event.preventDefault(); const price = Number(newItem.price_vnd.replace(/\D/g, '')); const duration = Number(newItem.duration_minutes); if (!Number.isSafeInteger(price) || price < 0 || !Number.isInteger(duration) || duration < 5 || duration > 480) { setError('Enter a valid price and duration.'); return } void mutate(() => api('/menu', { body: { ...newItem, price_vnd: price, duration_minutes: duration } }), 'Catalog item created.', () => setNewItem({ name: '', sku: '', kind: 'drink', price_vnd: '', duration_minutes: '20' })) }
@@ -184,14 +200,14 @@ export function App() {
   const visibleBookings = bookings.filter(item => (!bookingFilter.booth || item.booth_id === bookingFilter.booth) && (!bookingFilter.status || item.status === bookingFilter.status) && (!bookingFilter.guest || item.guest_name.toLowerCase().includes(bookingFilter.guest.toLowerCase())))
   const dayBookings = visibleBookings.filter(item => { const key = dateKey(selectedDate); return dateKey(new Date(item.start)) === key || dateKey(new Date(item.end)) === key })
 
-  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><Coffee size={23} /></div><div><b>{appContext.display_name}</b><small>PHOTOBOOTH OPS</small></div></div><div className="side-label">WORKSPACE</div><nav aria-label="Photobooth navigation">{appTabs.map(item => <button key={item.key} onClick={() => navigate(item.key)} aria-current={tab === item.key ? 'page' : undefined} className={tab === item.key ? 'nav-active' : ''}><item.icon size={18} />{item.text}</button>)}</nav><div className="side-spacer" /><div className="side-bottom"><div className="status-dot" />Connected via ApexVoid Enterprise</div></aside><main className="main"><header className="topbar"><div><div className="crumb">Business applications <span>/</span> {appContext.display_name}</div><h1>{appTabs.find(item => item.key === tab)?.text}</h1></div><div className="top-actions"><button className="icon-btn" title="Refresh" aria-label="Refresh data" onClick={() => void load()}><RefreshCw size={18} /></button><button className="icon-btn" title="Toggle color mode" aria-label="Toggle color mode" onClick={() => setDark(current => !current)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header><div className="content"><Banner message={error} onClose={() => setError(null)} />{notice && <div className="notice">{notice}</div>}{loading && <div className="loading">Synchronizing Photobooth workspace…</div>}
+  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-icon"><Coffee size={23} /></div><div><b>{appContext.display_name}</b><small>PHOTOBOOTH OPS</small></div></div><div className="side-label">WORKSPACE</div><nav aria-label="Photobooth navigation">{appTabs.map(item => <button key={item.key} onClick={() => navigate(item.key)} aria-current={tab === item.key ? 'page' : undefined} className={tab === item.key ? 'nav-active' : ''}><item.icon size={18} />{item.text}</button>)}</nav><div className="side-spacer" /><div className="side-bottom"><div className="status-dot" />Connected via ApexVoid Enterprise</div></aside><main className="main"><header className="topbar"><div><div className="crumb">Business applications <span>/</span> {appContext.display_name}</div><h1>{appTabs.find(item => item.key === tab)?.text}</h1></div><div className="top-actions"><button className="icon-btn" title="Refresh" aria-label="Refresh data" onClick={() => { void load(); setCareRefreshKey(current => current + 1) }}><RefreshCw size={18} /></button><button className="icon-btn" title="Toggle color mode" aria-label="Toggle color mode" onClick={() => setDark(current => !current)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button></div></header><div className="content"><Banner message={error} onClose={() => setError(null)} />{notice && <div className="notice">{notice}</div>}{loading && <div className="loading">Synchronizing Photobooth workspace…</div>}
         {tab === 'overview' && <><div className="intro"><div className="eyebrow">PHOTOBOOTH OPERATIONS</div><h2>Great sessions. Lasting memories.</h2><p>Coordinate photo-booth reservations, guest flow, and the optional café counter from one workspace-aware application.</p><button className="primary intro-button" onClick={() => navigate('bookings')}><CalendarDays size={16} />Open booking calendar</button></div><div className="stats"><div><span>Today's bookings</span><strong>{bookings.filter(item => dateKey(new Date(item.start)) === dateKey(new Date())).length}</strong><small>All booking states</small><CalendarDays size={21} /></div><div><span>Checked in</span><strong>{bookings.filter(item => item.status === 'checked_in').length}</strong><small>Guests on site</small><UserRound size={21} /></div><div><span>Sessions live</span><strong>{bookings.filter(item => item.status === 'in_progress').length}</strong><small>Booths in use</small><Camera size={21} /></div><div><span>Completed</span><strong>{bookings.filter(item => item.status === 'completed').length}</strong><small>Loaded booking history</small><Check size={21} /></div></div><div className="columns"><Pane title="Next reservations" extra={<button className="text-action" onClick={() => navigate('bookings')}>Open calendar →</button>}>{activeBookings.slice(0, 6).map(item => <BookingRow key={item.id} booking={item} onClick={() => void loadEvents(item)} />)}{!activeBookings.length && <p className="empty">No active reservations. The calendar is ready for the next guest.</p>}</Pane><Pane title="Booth utilization"><div className="utilization-list">{booths.map(booth => { const count = activeBookings.filter(item => item.booth_id === booth.id).length; return <div className="utilization" key={booth.id}><div><b>{booth.name}</b><small>{count ? `${count} active session${count > 1 ? 's' : ''}` : 'Available today'}</small></div><div className="progress"><i style={{ width: `${Math.min(100, count * 38)}%` }} /></div></div> })}{!booths.length && <p className="empty">Add a booth in Operations setup.</p>}</div></Pane></div></>}
         {tab === 'bookings' && <BookingWorkspace booths={booths} photos={photos} bookings={visibleBookings} dayBookings={dayBookings} days={days} selectedDate={selectedDate} setSelectedDate={setSelectedDate} calendarMode={calendarMode} setCalendarMode={setCalendarMode} bookingFilter={bookingFilter} setBookingFilter={setBookingFilter} reservation={reservation} setReservation={setReservation} slots={slots} book={book} availabilityLoading={availabilityLoading} availabilityError={availabilityError} busy={busy} loadEvents={loadEvents} transition={transition} />}
-        {tab === 'care' && <GuestCareDesk calendarBookings={bookings} searchBookings={searchGuestBookings} onOpenBooking={loadEvents} onOpenCalendar={() => navigate('bookings')} />}
+        {tab === 'care' && <GuestCareDesk loadTodayBookings={loadTodayBookings} refreshKey={careRefreshKey} searchBookings={searchGuestBookings} onOpenBooking={loadEvents} onOpenCalendar={() => navigate('bookings')} />}
         {tab === 'history' && <HistoryView bookings={bookingHistory.items} page={bookingHistory.page} total={bookingHistory.total} hasMore={bookingHistory.has_more} onPageChange={setHistoryPage} selectedBooking={selectedBooking} events={events} loadEvents={loadEvents} />}
         {tab === 'counter' && <CounterView drinks={drinks} orders={orders} cart={cart} setCart={setCart} cartItems={cartItems} cartTotal={cartTotal} orderNote={orderNote} setOrderNote={setOrderNote} makeOrder={makeOrder} busy={busy} transitionOrder={(id, action) => void mutate(() => api(`/orders/${id}/${action}`, { body: {} }), `Order ${action}d.`)} />}
         {tab === 'setup' && <SetupView items={items} newItem={newItem} setNewItem={setNewItem} addItem={addItem} booths={booths} boothName={boothName} setBoothName={setBoothName} addBooth={() => void mutate(() => api('/booths', { body: { name: boothName } }), 'Booth created.', () => setBoothName(''))} schedules={schedules} saveSchedule={(schedule) => void mutate(() => api(`/schedules/${schedule.weekday}`, { method: 'PUT', body: schedule }), 'Schedule saved.', loadOperations)} blackouts={blackouts} blackout={blackout} setBlackout={setBlackout} addBlackout={() => void mutate(() => api('/blackouts', { body: blackout }), 'Blackout added.', () => setBlackout({ booth_id: '', start: '', end: '', reason: '' }))} deleteBlackout={(id) => void mutate(() => api(`/blackouts/${id}`, { method: 'DELETE' }), 'Blackout removed.', loadOperations)} busy={busy} />}
-      </div><footer><span>{appContext.display_name} · Workspace-isolated application</span><span><TicketCheck size={13} /> Booking times are checked by the backend</span></footer></main>{selectedBooking && <BookingDrawer booking={selectedBooking} events={events} onClose={() => setSelectedBooking(null)} transition={transition} reschedule={reschedule} busy={busy} />}</div>
+      </div><footer><span>{appContext.display_name} · Workspace-isolated application</span><span><TicketCheck size={13} /> Booking times are checked by the backend</span></footer></main>{selectedBooking && <BookingDrawer booking={selectedBooking} events={events} onClose={() => { selectionRequest.current++; setSelectedBooking(null) }} transition={transition} reschedule={reschedule} busy={busy} />}</div>
 }
 
 function BookingRow({ booking, onClick }: { booking: Booking; onClick: () => void }) { return <button className="record record-button" onClick={onClick}><div><b>{booking.booking_ref || `#${booking.id.slice(0, 8)}`} · {booking.guest_name}</b><small>{booking.booth_name} · {timeText(booking.start)} · {booking.package_name}</small></div><Pill value={booking.status} /></button> }
@@ -315,8 +331,6 @@ function BookingDrawer({ booking, events, onClose, transition, reschedule, busy 
     event.preventDefault()
     if (!pendingAction || !reason.trim()) return
     transition(booking, pendingAction, reason.trim())
-    setPendingAction(null)
-    setReason('')
   }
   return <div className="drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose() }}>
     <aside className="drawer care-booking-drawer" role="dialog" aria-modal="true" aria-label={`Guest details for ${booking.guest_name}`}>
