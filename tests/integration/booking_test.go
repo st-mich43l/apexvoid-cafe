@@ -132,6 +132,31 @@ func TestBookingMigrationsAndConcurrency(t *testing.T) {
 	if wins != 1 || conflicts != 1 {
 		t.Fatalf("expected one committed booking and one conflict, got %d / %d", wins, conflicts)
 	}
+	// Rescheduling into an occupied slot must preserve the original booking
+	// and never partially write a new timestamp or activity event.
+	shifted := input
+	shifted.Start, shifted.End = concurrent.Start, concurrent.End
+	if _, err := store.RescheduleBooking(ctx, workspace, actor, created.ID, shifted); err != domain.ErrConflict {
+		t.Fatalf("conflicting reschedule unexpectedly succeeded: %v", err)
+	}
+	unchanged, err := store.GetBooking(ctx, workspace, created.ID)
+	if err != nil || !unchanged.Start.Equal(input.Start) {
+		t.Fatalf("conflicting reschedule changed original: %+v %v", unchanged, err)
+	}
+	idempotent := domain.BookingInput{BoothID: booth, PackageID: item, GuestName: "Repeated request", Start: start.Add(6 * time.Hour), End: start.Add(6*time.Hour + 20*time.Minute), IdempotencyKey: "stable-create-request"}
+	first, err := store.CreateBooking(ctx, workspace, actor, idempotent)
+	if err != nil {
+		t.Fatalf("first idempotent booking: %v", err)
+	}
+	repeated, err := store.CreateBooking(ctx, workspace, actor, idempotent)
+	if err != nil || repeated.ID != first.ID {
+		t.Fatalf("idempotent retry created another booking: %+v %v", repeated, err)
+	}
+	mismatched := idempotent
+	mismatched.GuestName = "Different guest"
+	if _, err := store.CreateBooking(ctx, workspace, actor, mismatched); err != domain.ErrConflict {
+		t.Fatalf("accepted idempotency key reused for a different guest: %v", err)
+	}
 	weekday := int(start.Weekday())
 	if _, err := db.ExecContext(ctx, "INSERT INTO cafe.cafe_operating_schedules(workspace_id,weekday,buffer_before_minutes,buffer_after_minutes,created_by) VALUES($1,$2,10,10,$3)", workspace, weekday, actor); err != nil {
 		t.Fatal(err)
