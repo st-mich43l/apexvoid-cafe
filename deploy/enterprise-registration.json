@@ -1,7 +1,7 @@
 {
   "id": "cafe",
-  "display_name": "ApexVoid Café & Photo Booth",
-  "description": "Independent café counter and photo-booth booking application",
+  "display_name": "ApexVoid Photobooth",
+  "description": "Independent photo-booth booking and venue operations application with an optional café counter",
   "version": "0.1.0",
   "api_contract_version": "v1",
   "service_identity": "cafe",

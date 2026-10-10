@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/domain"
 )
 
 // LegacyBookings keeps the original booking API operational while Enterprise

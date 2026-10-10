@@ -1,4 +1,4 @@
-module github.com/st-mich43l/apexvoid-cafe
+module github.com/st-mich43l/apexvoid-photobooth
 
 go 1.25
 

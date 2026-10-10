@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/st-mich43l/apexvoid-cafe/internal/domain"
-	"github.com/st-mich43l/apexvoid-cafe/internal/platform"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/domain"
+	"github.com/st-mich43l/apexvoid-photobooth/internal/platform"
 )
 
 type Store interface {
@@ -252,7 +252,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/context", s.guard("cafe.catalog.read", func(w http.ResponseWriter, r *http.Request, _ platform.Decision) {
 		displayName := strings.TrimSpace(r.Header.Get(platform.ApplicationDisplayNameHeader))
 		if displayName == "" {
-			displayName = "ApexVoid Café"
+			displayName = "ApexVoid Photobooth"
 		}
 		write(w, http.StatusOK, map[string]string{"application_id": "cafe", "display_name": displayName})
 	}))
