@@ -22,7 +22,13 @@ const dateLabel = (date: Date) => date.toLocaleDateString('vi-VN', { weekday: 's
 const statusLabel = (status: string) => status.replaceAll('_', ' ')
 
 async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
-  const response = await fetch(base + path, { method: options.method ?? (options.body === undefined ? 'GET' : 'POST'), credentials: 'same-origin', headers: { Accept: 'application/json', ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, body: options.body === undefined ? undefined : JSON.stringify(options.body) })
+  const selectedWorkspace = new URLSearchParams(window.location.search).get('workspace_id') ?? window.localStorage.getItem('apexvoid.active_workspace')
+  const response = await fetch(base + path, {
+    method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', ...(selectedWorkspace ? { 'X-ApexVoid-Workspace': selectedWorkspace } : {}), ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  })
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null) as { error?: { code?: string } } | null
     const code = errorBody?.error?.code ?? 'REQUEST_FAILED'
