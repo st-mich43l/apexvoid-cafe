@@ -123,7 +123,9 @@ type legacyBookingStore interface {
 
 func (s *Server) legacyBookingsPending(ctx context.Context) (legacyBookingStore, bool) {
 	store := s.currentStore()
-	checker, exists := store.(interface{ AdvancedBookingReady(context.Context) (bool, error) })
+	checker, exists := store.(interface {
+		AdvancedBookingReady(context.Context) (bool, error)
+	})
 	if !exists {
 		return nil, false
 	}
