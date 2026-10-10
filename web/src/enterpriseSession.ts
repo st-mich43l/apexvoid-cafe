@@ -3,6 +3,7 @@
 // must never read/store platform tokens or introduce their own login/session.
 let refreshInFlight: Promise<boolean> | null = null
 let redirectStarted = false
+let lastSuccessfulRefreshAt = 0
 
 async function gatewaySessionExpired(response: Response): Promise<boolean> {
   if (response.status !== 401) return false
@@ -16,7 +17,10 @@ function refreshEnterpriseSession(): Promise<boolean> {
     method: 'POST',
     credentials: 'same-origin',
     headers: { Accept: 'application/json' },
-  }).then(response => response.ok).catch(() => false).finally(() => { refreshInFlight = null })
+  }).then(response => {
+    if (response.ok) lastSuccessfulRefreshAt = Date.now()
+    return response.ok
+  }).catch(() => false).finally(() => { refreshInFlight = null })
   return refreshInFlight
 }
 
@@ -33,8 +37,12 @@ function signInThroughEnterprise() {
 // safe-to-replay request once is sufficient: the gateway rejected the first
 // attempt before the Photobooth API handled it.
 export async function enterpriseFetch(input: string, init: RequestInit): Promise<Response> {
+  const startedAt = Date.now()
   const response = await fetch(input, init)
   if (!await gatewaySessionExpired(response)) return response
+  // Concurrent requests may receive their old 401 after another request has
+  // already rotated the refresh cookie. Retry using the new access cookie first.
+  if (lastSuccessfulRefreshAt > startedAt) return fetch(input, init)
   const refreshed = await refreshEnterpriseSession()
   if (refreshed) return fetch(input, init)
   signInThroughEnterprise()
