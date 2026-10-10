@@ -13,10 +13,11 @@ const money = (value: number) => new Intl.NumberFormat('vi-VN').format(value) + 
 const timeText = (value: string) => new Date(value).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })
 
 async function api<T>(path: string, payload?: unknown): Promise<T> {
+  const selectedWorkspace = new URLSearchParams(window.location.search).get('workspace_id') ?? window.localStorage.getItem('apexvoid.active_workspace')
   const response = await fetch(base + path, {
     method: payload === undefined ? 'GET' : 'POST',
     credentials: 'same-origin',
-    headers: { Accept: 'application/json', ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { Accept: 'application/json', ...(selectedWorkspace ? { 'X-ApexVoid-Workspace': selectedWorkspace } : {}), ...(payload !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     body: payload === undefined ? undefined : JSON.stringify(payload),
   })
   if (!response.ok) {
